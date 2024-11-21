@@ -9,6 +9,12 @@
  * @returns - 回傳 'YYYY-MM' 格式的該日期的前一個月
  */
 export const getPreviousMonth = (dateStr) => {
+  // 使用正規表達式驗證格式是否為 'YYYY-MM'
+  const regex = /^\d{4}-\d{2}$/
+  if (!regex.test(dateStr)) {
+    return null
+  }
+
   // 將傳入的日期字串轉換為 Date 物件
   const [year, month] = dateStr.split('-').map(Number)
   const date = new Date(year, month - 1, 1)
@@ -37,12 +43,6 @@ export const getPreviousMonth = (dateStr) => {
  * @returns - 回傳該筆資訊的物件
  */
 export const findBusinessSignalsIndex = (businessSignals, date, behind = true) => {
-  // 使用正規表達式驗證格式是否為 'YYYY-MM'
-  const regex = /^\d{4}-\d{2}$/
-  if (!regex.test(date)) {
-    return null
-  }
-
   const index = businessSignals.findIndex((item) => {
     // 1.落後一個月 = 現實情況  2.月同步 = 理想
     const dateStr = behind === true ? getPreviousMonth(date) : date
