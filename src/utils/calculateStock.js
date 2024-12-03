@@ -30,13 +30,6 @@ export const getPreviousMonth = (dateStr) => {
 }
 /**
  * 搜尋歷史景氣燈號陣列裡的指定日期資料
- *
- * 範例：
- * classifyAge(10) 應該回傳 "Child"
- * classifyAge(15) 應該回傳 "Teenager"
- * classifyAge(30) 應該回傳 "Adult"
- * classifyAge(70) 應該回傳 "Senior"
- *
  * @param businessSignals - 歷史景氣指標
  * @param date - 要搜尋的日期
  * @param behind - 是否落後一個月
@@ -48,29 +41,10 @@ export const findBusinessSignalsIndex = (businessSignals, date, behind = true) =
     const dateStr = behind === true ? getPreviousMonth(date) : date
     return item.date === dateStr
   })
-
   // 搜不到日期
   if (index === -1) {
-    return null
-  }
-  // 邊界處理
-  if (index === businessSignals.length - 1) {
     return null
   }
 
   return businessSignals[index]
 }
-
-// export const findPmiHistorIndex = (date) => {
-//   const index = historPmi.findIndex((item) => item.date === date)
-
-//   // 邊界處理
-//   if (index === historPmi.length - 1) {
-//     return null
-//   } else {
-//     // 落後一個月 現實
-//     return historPmi[index + 1]
-//     // 同步指標 理想
-//     // return historPmi[index]
-//   }
-// }
