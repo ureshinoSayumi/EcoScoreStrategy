@@ -69,20 +69,20 @@ export const ecoScoreStrategy = (historStock, myStockInfo) => {
     function buyComputed(buyType) {
       // 判斷使用哪種買入規則 1.使用現有錢包百分比 2.每月固定投入
       switch (buyType) {
-        case 1: // 不定期不定額
-          // 錢包 * 每次買入百分比
-          buyPrice = myStockInfo.currentMoney * (myStockInfo.eachBuyingPercentage / 100) // 取百分比，例如 10 / 100 = 0.1%
-          break
-        case 2: // ˙定期定額
+        case 0: // ˙定期定額
           buyPrice = myStockInfo.eachBuyingFixedAmount // 取固定投入金額
           break
-        case 3: // ˙定期定額 + 定期不定額
+        case 1: // ˙定期定額 + 定期不定額
           // 定期不定額加碼金額 = (錢包 - 每月固定投入金額) * 加碼百分比
           buyPricePlus =
             (myStockInfo.currentMoney - myStockInfo.eachBuyingFixedAmount) *
             (myStockInfo.eachBuyingPercentage / 100)
           // 本月買入金額 = 每月固定投入金額 + 加碼金額
           buyPrice = myStockInfo.eachBuyingFixedAmount
+          break
+        case 2: // 不定期不定額
+          // 錢包 * 每次買入百分比
+          buyPrice = myStockInfo.currentMoney * (myStockInfo.eachBuyingPercentage / 100) // 取百分比，例如 10 / 100 = 0.1%
           break
       }
       myStockInfo.currentMoney = myStockInfo.currentMoney - (buyPrice + buyPricePlus) // 錢包扣掉這輪的買入金額
@@ -128,17 +128,20 @@ export const ecoScoreStrategy = (historStock, myStockInfo) => {
       }
       return resultType
     }
-    if (myStockInfo.buyType === 3) {
+    // 定期不定哦
+    if (myStockInfo.buyType === 1) {
       // 有無符合指標
       const strategyType = strategySelection(myStockInfo.strategyType)
       // 不符合任何指標就定期定額
       if (strategyType === null) {
-        buyComputed(2)
+        buyComputed(0)
       } else {
         // 符合聽定指標就加碼
-        buyComputed(3)
+        buyComputed(1)
       }
     } else {
+      // 判斷策略
+      // strategyType === null 有用策略，但沒符合任何策略
       const strategyType = strategySelection(myStockInfo.strategyType)
       if (strategyType !== null) {
         buyComputed(myStockInfo.buyType)
@@ -154,10 +157,11 @@ export const ecoScoreStrategy = (historStock, myStockInfo) => {
       businessSignalBCase: businessSignal, // 本輪景氣信號
       buyPrice: buyPrice || 0, // 本輪買入金額
       buyPricePlus: buyPricePlus || 0, // 本輪加碼金額
-      totalBuyingAmount: myStock.totalBuyingAmount, // 本輪累積買入金額
+      totalBuyPrice: buyPrice + buyPricePlus, // 本輪總買入金額 = 本輪買入金額 + 本輪加碼金額
+      totalBuyingAmount: myStockInfo.totalBuyingAmount, // 本輪累積買入金額
       buyStockCount: (buyPrice + buyPricePlus) / item.price || 0, // 本輪買入股數 = (本輪買入金 + 本輪加碼金額) / 股價
-      totalStockCount: myStock.totalStockCount, // 本輪累積買入股數
-      currentMoneyp: myStockInfo.currentMoney, // 本輪本金
+      totalStockCount: myStockInfo.totalStockCount, // 本輪累積買入股數
+      currentMoney: myStockInfo.currentMoney, // 本輪本金
     })
   })
 
@@ -207,7 +211,7 @@ const myStock = {
   businessSignalA: { index: 100, dataList: businessSignals }, // 買入策略-領先指標 index:小於 100 買入, isOpen: true 打開 false 關閉, dataList: 歷史資料
   businessSignalB: { index: 17, dataList: businessSignals }, // 買入策略-景氣信號 index:: 小於 16 買入, isOpen: true 打開 false 關閉, dataList: 歷史資料
   // 使用哪種策略 0: 每月買入 1: 全部符合 2: 單一符合 3: 只用 PMI, 4: 只用領先指標, 5: 只用景氣信號
-  strategyType: 2,
+  strategyType: 3,
 
   // 買入金額
   currentMoney: 0, // 錢包 每個月如果沒買入，就把錢放入錢包，如果有初始金額也會放在這裡
@@ -215,10 +219,14 @@ const myStock = {
   eachBuyingFixedAmount: 5000, // 每月固定投入金額
   eachSaveMoney: 10000, // 每月存入金額
   // 買入規則
+  // 0 定期定額.使用 eachBuyingFixedAmount 固定投入金額
+  // 1.定期不定額，低點加上加碼買入
+  // 2.不定期不定額 使用 eachBuyingPercentage 百分比
+  // 舊版
   // 1.不定期不定額 使用 eachBuyingPercentage 百分比
   // 2 定期定額.使用 eachBuyingFixedAmount 固定投入金額
   // 3.定期不定額，低點加上加碼買入
-  buyType: 1,
+  buyType: 3,
   // 統計資料
   buyingCount: 0, // 買入次數
   buyingCountPlus: 0, // 加碼次數
@@ -244,7 +252,7 @@ const myStock = {
 }
 ecoScoreStrategy(historStockMarket, myStock)
 
-console.log('log', myStock.log[0])
+console.log('log', myStock.log)
 console.log('當前存款', myStock.currentMoney)
 console.log('買入次數', myStock.buyingCount)
 console.log('加碼次數', myStock.buyingCountPlus)
