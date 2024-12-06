@@ -2,6 +2,7 @@
   <el-container>
     <el-header>
       <el-row :gutter="20">
+        <h1 @click="build">test BTN</h1>
         <!-- 日期區間選擇器 -->
         <el-col>
           <el-date-picker
@@ -207,6 +208,9 @@
           </el-card>
         </el-col>
       </el-row>
+      <div style="width: 100%; overflow-x: scroll">
+        <div ref="myChartDom" style="width: 1000px; height: 600px"></div>
+      </div>
       <!-- 表格 -->
       <el-table
         :data="total?.log"
@@ -287,9 +291,12 @@ import { historPmi } from '@/utils/data/historPmi.js'
 import { businessSignals } from '@/utils/data/businessSignals.js'
 import { historStockMarket } from '@/utils/data/historStockMarket.js'
 import { intlNumberFormat } from '@/utils/number.js'
-import { filterAndSortByDate } from '@/utils/date.js'
+import { filterAndSortByDate, getPastMonthsFirstDays } from '@/utils/date.js'
 import { strategyTypeOption, buyTypeOpton, getOptionLabel } from '@/utils/optionMap.js'
 import dayjs from 'dayjs'
+import * as echarts from 'echarts'
+import { buildStockECharts, convertStockDataToEChartsFormat } from '@/utils/ECharts.js'
+import { getStock } from '@/api/app.js'
 
 // 策略選項
 const useIndicatorOptions = [
@@ -342,6 +349,8 @@ const totalList = ref([
 const historStockMarketRange = ref([])
 const dateRange = ref([]) // 日期區間
 const activeIndex = ref(null) // 當前選取的 card
+const myChartDom = ref() // DOM
+const apiList = ref([]) // API回來的資訊
 
 const submit = () => {
   console.log('myStockForm', myStockForm)
@@ -392,6 +401,7 @@ const submit = () => {
     strategyType: myStockForm.strategyType,
     ...res,
   })
+  buildECharts()
   console.log('res', res)
   console.log('當前存款', res.currentMoney)
   console.log('買入次數', res.buyingCount)
@@ -456,13 +466,275 @@ const deleteTotalList = (index) => {
   totalList.value.splice(index, 1)
 }
 
+const buildECharts = () => {
+  console.log('echarts', echarts)
+  const myChart = echarts.init(myChartDom.value)
+
+  // // // 绘制图表
+  const option = {
+    title: {
+      text: 'Distribution of Electricity',
+      subtext: 'Fake Data',
+    },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: {
+        type: 'cross',
+      },
+    },
+    toolbox: {
+      show: true,
+      feature: {
+        saveAsImage: {},
+      },
+    },
+    xAxis: {
+      type: 'category',
+      boundaryGap: false,
+      // prettier-ignore
+      data: total.value?.log.map((item) => item.priceDate),
+      // data: ['00:00', '01:15', '02:30', '03:45', '05:00', '06:15', '07:30', '08:45', '10:00', '11:15', '12:30', '13:45', '15:00', '16:15', '17:30', '18:45', '20:00', '21:15', '22:30', '23:45'],
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: {
+        formatter: '{value}',
+      },
+      axisPointer: {
+        snap: true,
+      },
+    },
+    visualMap: {
+      show: false,
+      dimension: 0,
+      pieces: [
+        {
+          lte: 6,
+          color: 'green',
+        },
+        {
+          gt: 6,
+          lte: 8,
+          color: 'red',
+        },
+        {
+          gt: 8,
+          lte: 14,
+          color: 'green',
+        },
+        {
+          gt: 14,
+          lte: 17,
+          color: 'red',
+        },
+        {
+          gt: 17,
+          color: 'green',
+        },
+      ],
+    },
+    series: [
+      {
+        name: 'Electricity',
+        type: 'line',
+        smooth: true,
+        // prettier-ignore
+        data: total.value?.log.map((item) => item.price),
+        // data: [300, 280, 250, 260, 270, 300, 550, 500, 400, 390, 380, 390, 400, 500, 600, 750, 800, 700, 600, 400],
+        markArea: {
+          itemStyle: {
+            color: 'rgba(255, 173, 177, 0.4)',
+          },
+          data: [
+            // ...getPmiRange(total.value, myStockForm),
+            // ...getBusinessSignalARange(total.value, myStockForm),
+            // ...getBusinessSignalBRange(total.value, myStockForm),
+          ],
+          // data: [
+          //   [
+          //     {
+          //       name: 'Morning Peak',
+          //       xAxis: 50.9,
+          //     },
+          //     {
+          //       xAxis: 50.1,
+          //     },
+          //   ],
+          //   [
+          //     {
+          //       name: 'Morning Peak',
+          //       xAxis: '17:30',
+          //     },
+          //     {
+          //       xAxis: '21:15',
+          //     },
+          //   ],
+          // ],
+        },
+      },
+      // {
+      //   name: 'Electricity',
+      //   type: 'line',
+      //   smooth: true,
+      //   // prettier-ignore
+      //   data: total.value?.log.map((item) => item.totalBuyingAmount),
+      //   // data: [300, 280, 250, 260, 270, 300, 550, 500, 400, 390, 380, 390, 400, 500, 600, 750, 800, 700, 600, 400],
+      //   markArea: {
+      //     itemStyle: {
+      //       color: 'rgba(255, 173, 177, 0.4)',
+      //     },
+      //   },
+      // },
+    ],
+  }
+
+  myChart.setOption(option)
+  // console.log('option', option)
+}
+
+const getPmiRange = (arr, stockInfo) => {
+  const resArr = []
+  let temp = []
+  arr.log.forEach((item) => {
+    if (temp.length === 0 && item.pmi.data < stockInfo.pmi) {
+      temp.push({
+        name: 'P',
+        xAxis: item.price,
+        date: item.priceDate,
+      })
+      temp.push([])
+    } else if (temp.length > 0 && item.pmi.data < stockInfo.pmi) {
+      temp[1] = {
+        name: 'P',
+        xAxis: item.price,
+        date: item.priceDate,
+      }
+    } else if (temp.length > 0 && (item.pmi.data || 100) >= stockInfo.pmi) {
+      resArr.push(temp)
+      temp = []
+    }
+  })
+  console.log('resArr', resArr)
+  return resArr
+}
+const getBusinessSignalARange = (arr, stockInfo) => {
+  const resArr = []
+  let temp = []
+  arr.log.forEach((item) => {
+    if (temp.length === 0 && item.businessSignalACase.data < stockInfo.businessSignalA) {
+      temp.push({
+        name: 'A',
+        xAxis: item.price,
+        date: item.priceDate,
+      })
+      temp.push([])
+    } else if (temp.length > 0 && item.businessSignalACase.data < stockInfo.businessSignalA) {
+      temp[1] = {
+        name: 'A',
+        xAxis: item.price,
+        date: item.priceDate,
+      }
+    } else if (
+      temp.length > 0 &&
+      (item.businessSignalACase.data || 1000) >= stockInfo.businessSignalA
+    ) {
+      resArr.push(temp)
+      temp = []
+    }
+  })
+  console.log('resArr', resArr)
+  return resArr
+}
+const getBusinessSignalBRange = (arr, stockInfo) => {
+  const resArr = []
+  let temp = []
+  arr.log.forEach((item) => {
+    if (temp.length === 0 && item.businessSignalBCase.data2 < stockInfo.businessSignalB) {
+      temp.push({
+        name: 'B',
+        xAxis: item.price,
+        date: item.priceDate,
+      })
+      temp.push([])
+    } else if (temp.length > 0 && item.businessSignalBCase.data2 < stockInfo.businessSignalB) {
+      temp[1] = {
+        name: 'B',
+        xAxis: item.price,
+        date: item.priceDate,
+      }
+    } else if (
+      temp.length > 0 &&
+      (item.businessSignalBCase.data2 || 1000) >= stockInfo.businessSignalB
+    ) {
+      resArr.push(temp)
+      temp = []
+    }
+  })
+  console.log('resArr', resArr)
+  return resArr
+}
+
+const buildECharts2 = () => {
+  // const myChart = echarts.init(myChartDom.value)
+  buildStockECharts(myChartDom.value)
+}
+
+const getApi = async (date) => {
+  try {
+    const res = await getStock({
+      date: date,
+      stockNo: '0050',
+    })
+  } catch (err) {
+    console.error(err)
+    return Promise.reject(err)
+  }
+}
+
+const getAllApi = async () => {
+  const dateList = getPastMonthsFirstDays(12)
+  console.log('dateList', dateList)
+  const requests = []
+
+  try {
+    dateList.forEach((item) => {
+      requests.push(
+        getStock({
+          date: item,
+          stockNo: '0050',
+          response: 'json',
+          _: new Date().getTime(),
+        }),
+      )
+    })
+    const results = await Promise.all(requests)
+    results.forEach((item) => {
+      apiList.value.push(...convertStockDataToEChartsFormat(item.data.data))
+    })
+    // 排序函式
+    apiList.value.sort((a, b) => {
+      // 將日期字串轉換為時間戳記進行比較
+      const dateA = new Date(a[0])
+      const dateB = new Date(b[0])
+      return dateA - dateB
+    })
+    console.log('results', results)
+    console.log('apiList.value', apiList.value)
+  } catch (err) {
+    console.error(err)
+  }
+}
+
 onMounted(() => {
+  // getAllApi()
   console.log('historStockMarket', historStockMarket)
   historStockMarketRange.value = historStockMarket
   dateRange.value = [
     `${historStockMarket[0].date}-01`,
     `${historStockMarket[historStockMarket.length - 1].date}-01`,
   ]
+  // buildECharts()
+  buildECharts2()
 })
 </script>
 <style scoped>

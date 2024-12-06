@@ -14,5 +14,12 @@ export default defineConfig({
   server: {
     host: '0.0.0.0', // 指定host為0.0.0.0,允許外部訪問
     port: 5175, // 指定端口號
+    proxy: {
+      '/api': {
+        target: 'https://www.twse.com.tw/rwd/zh/afterTrading/',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ''),
+      },
+    },
   },
 })
