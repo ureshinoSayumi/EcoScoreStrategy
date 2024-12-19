@@ -1,3 +1,6 @@
+// 取得指定區間的日期
+// range: 日期區間, data: 歷史股價
+// 日期格式 YYYY-MM
 export const filterAndSortByDate = (range, data) => {
   // 解構日期範圍，並轉為 Date 物件方便比較
   const [startDateStr, endDateStr] = range
@@ -20,6 +23,28 @@ export const filterAndSortByDate = (range, data) => {
   return sortedData
 }
 
+export const filterAndSortByDate2 = (range, data) => {
+  // 解構日期範圍，並轉為 Date 物件方便比較
+  const [startDateStr, endDateStr] = range
+  const startDate = new Date(startDateStr)
+  const endDate = new Date(endDateStr)
+
+  // 過濾符合日期區間的資料
+  const filteredData = data.filter((item) => {
+    const itemDate = new Date(item[0]) // 將 YYYY-MM 格式補全為 YYYY-MM-DD
+    return itemDate >= startDate && itemDate <= endDate
+  })
+
+  // 按照日期排序
+  const sortedData = filteredData.sort((a, b) => {
+    const dateA = new Date(a[0])
+    const dateB = new Date(b[0])
+    return dateA - dateB
+  })
+
+  return sortedData
+}
+
 // 民國年轉西元年
 export const convertToGregorian = (dateString) => {
   // 拆解民國日期為三個部分：年、月、日
@@ -31,11 +56,14 @@ export const convertToGregorian = (dateString) => {
   return gregorianDate
 }
 
-// 取得當前日期為起點，過去x月的每月第一天
-// 輸入 3
+// 取得指定日期為起點，過去x月的每月第一天，如果不給第二參數，就用當前日期為起點
+// 輸入 3, 20241201
 // 輸出：['20241201', '20241101', '20241001']
-export const getPastMonthsFirstDays = (months) => {
-  const today = new Date()
+export const getPastMonthsFirstDays = (months, startDate) => {
+  // 如果有提供 startDate，轉換成 Date 物件；否則使用當前日期
+  const today = startDate
+    ? new Date(`${startDate.slice(0, 4)}-${startDate.slice(4, 6)}-01`)
+    : new Date()
   const results = []
 
   for (let i = 0; i < months; i++) {

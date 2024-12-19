@@ -2,9 +2,10 @@
   <el-container>
     <el-main>
       <el-row :gutter="20">
-        <h1>景氣循環投資法</h1>
+        <h1>技術分析投資法</h1>
         <!-- 日期區間選擇器 -->
         <el-col>
+          {{ dateRange }}
           <el-date-picker
             v-model="dateRange"
             @change="changeDateRange"
@@ -17,7 +18,7 @@
         </el-col>
         <!-- 買入策略 -->
       </el-row>
-      <el-row :gutter="20">
+      <el-row class="mt-5" :gutter="20">
         <el-col :span="4">
           <el-form label-width="auto">
             <el-form-item label="買入策略">
@@ -42,46 +43,6 @@
                   >不定期不定額</el-radio
                 >
               </el-radio-group>
-            </el-form-item>
-          </el-form>
-        </el-col>
-        <el-col :span="6">
-          <el-form label-width="auto">
-            <el-form-item label="PMI 配置">
-              <el-input-number
-                v-model="myStockForm.pmi"
-                :min="0"
-                size="small"
-                :disabled="
-                  myStockForm.strategyType === 0 ||
-                  myStockForm.strategyType === 4 ||
-                  myStockForm.strategyType === 5
-                "
-              />
-            </el-form-item>
-            <el-form-item label="領先指標配置">
-              <el-input-number
-                v-model="myStockForm.businessSignalA"
-                :min="0"
-                size="small"
-                :disabled="
-                  myStockForm.strategyType === 0 ||
-                  myStockForm.strategyType === 3 ||
-                  myStockForm.strategyType === 5
-                "
-              />
-            </el-form-item>
-            <el-form-item label="景氣信號配置">
-              <el-input-number
-                v-model="myStockForm.businessSignalB"
-                :min="0"
-                size="small"
-                :disabled="
-                  myStockForm.strategyType === 0 ||
-                  myStockForm.strategyType === 3 ||
-                  myStockForm.strategyType === 4
-                "
-              />
             </el-form-item>
           </el-form>
         </el-col>
@@ -146,7 +107,7 @@
                   <el-text>日期區間: {{ `${item.dateRange[0]} ~ ${item.dateRange[1]}` }}</el-text>
                   <el-text>
                     使用指標:
-                    {{ getOptionLabel(strategyTypeOption, item.strategyType) }}
+                    {{ getOptionLabel(strategyTypeOptionAverageLine, item.strategyType) }}
                   </el-text>
                   <el-text
                     v-if="
@@ -206,13 +167,10 @@
           </el-card>
         </el-col>
       </el-row>
-      <el-checkbox v-model="isShowChart">打開圖表</el-checkbox>
 
-      <CandlestickChart
-        v-if="isShowChart"
-        v-model:activeRange="activeRange"
-        v-model:charData="stock0050_20100104_20241209"
-      />
+      <CandlestickChart v-model:charData="stock0050_20100104_20241209" />
+      <EconomicIndex v-model:charData="stock0050_20100104_20241209" />
+
       <!-- <DefaultChart v-model:charData="total" /> -->
       <!-- 表格 -->
       <el-table
@@ -229,60 +187,50 @@
             {{ intlNumberFormat(scope.row.buyPrice) }}
           </template>
         </el-table-column>
-        <el-table-column prop="buyPricePlus" label="此月加碼金額">
+        <el-table-column prop="sellPrice" label="此月賣出金額">
           <template #default="scope">
-            {{ intlNumberFormat(scope.row.buyPricePlus) }}
+            {{ intlNumberFormat(scope.row.sellPrice) }}
           </template>
         </el-table-column>
-        <el-table-column prop="totalBuyPrice" label="此月總買入金額">
+        <!-- <el-table-column prop="totalBuyPrice" label="此月總買入金額">
           <template #default="scope">
             {{ intlNumberFormat(scope.row.totalBuyPrice) }}
           </template>
-        </el-table-column>
+        </el-table-column> -->
         <el-table-column prop="buyPricePlus" label="指標" width="220">
           <template #default="scope">
-            <span
-              :class="
-                scope.row.businessSignalACase.data < myStockForm.businessSignalA ? 'lightText' : ''
-              "
-              >{{
-                `${scope.row.businessSignalACase.date || ''} 領先指標：${scope.row.businessSignalACase.data || ''}`
-              }}</span
-            ><br />
-            <span
-              :class="
-                scope.row.businessSignalACase.data2 < myStockForm.businessSignalB ? 'lightText' : ''
-              "
-            >
-              {{
-                `${scope.row.businessSignalACase.date || ''} 景氣燈號：${scope.row.businessSignalACase.data2 || ''}`
-              }}</span
-            ><br />
-            <span :class="scope.row.pmi.data < myStockForm.pmi ? 'lightText' : ''">
-              {{ `${scope.row.pmi.date || ''} 採購經理人：${scope.row.pmi.data || ''}` }}
+            <span :class="scope.row.price >= scope.row.ma20 ? 'lightText' : ''">
+              {{ `ma20: ${scope.row.ma20}` }}
             </span>
+            <br />
+            <span :class="scope.row.price >= scope.row.ma60 ? 'lightText' : ''">
+              {{ `ma60: ${scope.row.ma60}` }}
+            </span>
+            <br />
+            <span :class="scope.row.price >= scope.row.ma120 ? 'lightText' : ''">
+              {{ `ma120: ${scope.row.ma120}` }}</span
+            >
+            <br />
+            <span :class="scope.row.price >= scope.row.ma240 ? 'lightText' : ''">
+              {{ `ma240: ${scope.row.ma240}` }} </span
+            ><br />
           </template>
         </el-table-column>
-        <el-table-column prop="totalBuyingAmount" label="此月累積買入金額">
+        <!-- <el-table-column prop="totalBuyingAmount" label="此月累積買入金額">
           <template #default="scope">
             {{ intlNumberFormat(scope.row.totalBuyingAmount) }}
           </template>
-        </el-table-column>
+        </el-table-column> -->
         <el-table-column prop="buyStockCount" label="此月買入股數">
           <template #default="scope">
             {{ intlNumberFormat(scope.row.buyStockCount) }}
           </template>
         </el-table-column>
-        <el-table-column prop="totalStockCount" label="此月累積買入股數">
+        <!-- <el-table-column prop="totalStockCount" label="此月累積買入股數">
           <template #default="scope">
             {{ intlNumberFormat(scope.row.totalStockCount) }}
           </template>
-        </el-table-column>
-        <el-table-column prop="totalStockCount" label="此月累積買入平均成本">
-          <template #default="scope">
-            {{ intlNumberFormat(scope.row.buyingAveragePrice) }}
-          </template>
-        </el-table-column>
+        </el-table-column> -->
         <el-table-column prop="currentMoney" label="此月本金">
           <template #default="scope">
             {{ intlNumberFormat(scope.row.currentMoney) }}
@@ -294,42 +242,37 @@
 </template>
 <script lang="ts" setup>
 import { ref, reactive, onMounted, computed } from 'vue'
-import { ecoScoreStrategy } from '../../public/demo2.js'
+import { ecoScoreStrategy } from '../../../public/demo2.js'
 import { historPmi } from '@/utils/data/historPmi.js'
 import { businessSignals } from '@/utils/data/businessSignals.js' // 景氣信號、領先指標
 import { historStockMarket } from '@/utils/data/historStockMarket.js'
 import { intlNumberFormat } from '@/utils/number.js'
-import { filterAndSortByDate, getPastMonthsFirstDays } from '@/utils/date.js'
-import { strategyTypeOption, buyTypeOpton, getOptionLabel } from '@/utils/optionMap.js'
+import { filterAndSortByDate2 } from '@/utils/date.js'
+import { strategyTypeOptionAverageLine, buyTypeOpton, getOptionLabel } from '@/utils/optionMap.js'
 import * as echarts from 'echarts'
 import { convertStockDataToEChartsFormat } from '@/utils/ECharts.js'
 import { getStock } from '@/api/app.js'
 import CandlestickChart from '@/components/CandlestickChart.vue'
-import DefaultChart from '@/components/DefaultChart.vue'
+import EconomicIndex from '@/components/EconomicIndex.vue'
 import { stock0050_20100104_20241209 } from '@/utils/stockList.js'
+import { technicalAnalysisStrategy } from '@/utils/computed.js'
 
 // 策略選項
 const useIndicatorOptions = [
   { value: 0, label: '每月買入' },
-  { value: 1, label: '全部符合' },
-  { value: 2, label: '單一符合' },
-  { value: 3, label: '只用 PMI' },
-  { value: 4, label: '只用領先指標' },
-  { value: 5, label: '只用景氣信號' },
-  { value: 6, label: '低於平均成本' },
+  { value: 1, label: '站上60均線' },
+  { value: 2, label: '站上120均線' },
+  { value: 3, label: '站上240均線' },
 ]
 // 儀表板表單
 const myStockForm = reactive({
-  pmi: 50, // 買入策略-PMI index: 小於 50 買入, isOpen: true 打開 false 關閉, dataList: 歷史資料
-  businessSignalA: 100, // 買入策略-領先指標 index:小於 100 買入, isOpen: true 打開 false 關閉, dataList: 歷史資料
-  businessSignalB: 17, // 買入策略-景氣信號 index:: 小於 16 買入, isOpen: true 打開 false 關閉, dataList: 歷史資料
-  // 使用哪種策略 0: 每月買入 1: 全部符合 2: 單一符合 3: 只用 PMI, 4: 只用領先指標, 5: 只用景氣信號
+  // 0: 不使用策略每月買入 1: 站上60均線 2: 站上120均線 3: 站上240均線
   strategyType: 0,
   // 買入金額
-  currentMoney: 0, // 錢包 每個月如果沒買入，就把錢放入錢包，如果有初始金額也會放在這裡
-  eachBuyingPercentage: 10, // 加碼百分比 (百分比)
-  eachBuyingFixedAmount: 100, // 每月固定投入金額
-  eachSaveMoney: 200, // 每月存入金額
+  currentMoney: 10000, // 錢包 每個月如果沒買入，就把錢放入錢包，如果有初始金額也會放在這裡
+  eachBuyingPercentage: 100, // 加碼百分比 (百分比)
+  eachBuyingFixedAmount: 0, // 每月固定投入金額
+  eachSaveMoney: 0, // 每月存入金額
   // 買入規則 1.不定期不定額 使用 eachBuyingPercentage 百分比 2 定期定額.使用 eachBuyingFixedAmount 固定投入金額 3.定期不定額，低點加上加碼買入
   buyType: 0,
 })
@@ -356,22 +299,18 @@ const totalList = ref([
   //   log: [],
   // }
 ])
-// 選擇的日期區間
-const historStockMarketRange = ref([])
+// 歷史股價
+const historStockMarketRange = ref(stock0050_20100104_20241209)
 const dateRange = ref([]) // 日期區間
 const activeIndex = ref(null) // 當前選取的 card
-const apiList = ref([]) // API回來的資訊
-const isShowChart = ref(false) // 是否顯示圖表
-const activeRange = ref([])
 
 const submit = () => {
   console.log('myStockForm', myStockForm)
+  console.log('myStockForm', myStockForm)
   const stockInfo = {
-    pmi: { index: myStockForm.pmi, dataList: historPmi }, // 買入策略-PMI index: 小於 50 買入, isOpen: true 打開 false 關閉, dataList: 歷史資料
-    businessSignalA: { index: myStockForm.businessSignalA, dataList: businessSignals }, // 買入策略-領先指標 index:小於 100 買入, isOpen: true 打開 false 關閉, dataList: 歷史資料
-    businessSignalB: { index: myStockForm.businessSignalB, dataList: businessSignals }, // 買入策略-景氣信號 index:: 小於 16 買入, isOpen: true 打開 false 關閉, dataList: 歷史資料
-    // 使用哪種策略 0: 每月買入 1: 全部符合 2: 單一符合 3: 只用 PMI, 4: 只用領先指標, 5: 只用景氣信號
+    // 0: 不使用策略每月買入 1: 站上60均線 2: 站上120均線 3: 站上240均線
     strategyType: myStockForm.strategyType,
+    status: 0, // 當前買入狀態 0: 未買入 1: 以買入
 
     // 買入金額
     currentMoney: myStockForm.currentMoney, // 錢包 每個月如果沒買入，就把錢放入錢包，如果有初始金額也會放在這裡
@@ -385,6 +324,7 @@ const submit = () => {
     buyType: myStockForm.buyType,
     // 統計資料
     buyingCount: 0, // 買入次數
+    sallCount: 0, // 賣出次數
     buyingCountPlus: 0, // 加碼次數
     totalStockCount: 0, // 總買入股數
     totalBuyingAmount: 0, // 總買入成本
@@ -399,6 +339,7 @@ const submit = () => {
       // businessSignalACase: businessSignal, // 本輪領先指標
       // businessSignalBCase: businessSignal, // 本輪景氣信號
       // buyPrice: buyPrice || 0, // 本輪買入金額
+      // sellPrice: sellPrice || 0, // 本輪賣出金額
       // totalBuyingAmount: myStock.totalBuyingAmount, // 本輪累積買入金額
       // buyStockCount: buyPrice / item.price || 0, // 買入股數
       // totalStockCount: myStock.totalStockCount, // 本輪累積買入股數
@@ -406,7 +347,11 @@ const submit = () => {
       // },
     ],
   }
-  const res = ecoScoreStrategy(historStockMarketRange.value, stockInfo)
+  const res = technicalAnalysisStrategy(
+    stockInfo,
+    historStockMarketRange.value,
+    stock0050_20100104_20241209,
+  )
   total.value = res
   console.log('total.value', total.value)
   totalList.value.push({
@@ -428,7 +373,7 @@ const submit = () => {
 }
 
 const tableRowClassName = ({ row }) => {
-  if (row.buyPricePlus) {
+  if (row.buyPrice || row.sellPrice) {
     return 'warning-row'
   }
   return ''
@@ -436,19 +381,8 @@ const tableRowClassName = ({ row }) => {
 
 const changeDateRange = () => {
   console.log('dateRange', dateRange.value)
-  historStockMarketRange.value = filterAndSortByDate(dateRange.value, historStockMarket)
-  const businessSignalsRange = filterAndSortByDate(dateRange.value, businessSignals)
-
-  // console.log('historStockMarketRange.value', historStockMarketRange.value)
-  console.log('businessSignalsRange', businessSignalsRange)
-  activeRange.value = [
-    {
-      brushType: 'lineX',
-      coordRange: [dateRange.value[0], dateRange.value[1]], // 第二組
-      xAxisIndex: 0,
-      yAxisIndex: 0,
-    },
-  ]
+  historStockMarketRange.value = filterAndSortByDate2(dateRange.value, stock0050_20100104_20241209)
+  console.log('historStockMarketRange.value', historStockMarketRange.value)
 }
 
 const changeStrategyType = () => {
@@ -490,145 +424,7 @@ const deleteTotalList = (index) => {
   totalList.value.splice(index, 1)
 }
 
-const buildECharts = () => {}
-
-const getPmiRange = (arr, stockInfo) => {
-  const resArr = []
-  let temp = []
-  arr.log.forEach((item) => {
-    if (temp.length === 0 && item.pmi.data < stockInfo.pmi) {
-      temp.push({
-        name: 'P',
-        xAxis: item.price,
-        date: item.priceDate,
-      })
-      temp.push([])
-    } else if (temp.length > 0 && item.pmi.data < stockInfo.pmi) {
-      temp[1] = {
-        name: 'P',
-        xAxis: item.price,
-        date: item.priceDate,
-      }
-    } else if (temp.length > 0 && (item.pmi.data || 100) >= stockInfo.pmi) {
-      resArr.push(temp)
-      temp = []
-    }
-  })
-  console.log('resArr', resArr)
-  return resArr
-}
-const getBusinessSignalARange = (arr, stockInfo) => {
-  const resArr = []
-  let temp = []
-  arr.log.forEach((item) => {
-    if (temp.length === 0 && item.businessSignalACase.data < stockInfo.businessSignalA) {
-      temp.push({
-        name: 'A',
-        xAxis: item.price,
-        date: item.priceDate,
-      })
-      temp.push([])
-    } else if (temp.length > 0 && item.businessSignalACase.data < stockInfo.businessSignalA) {
-      temp[1] = {
-        name: 'A',
-        xAxis: item.price,
-        date: item.priceDate,
-      }
-    } else if (
-      temp.length > 0 &&
-      (item.businessSignalACase.data || 1000) >= stockInfo.businessSignalA
-    ) {
-      resArr.push(temp)
-      temp = []
-    }
-  })
-  console.log('resArr', resArr)
-  return resArr
-}
-const getBusinessSignalBRange = (arr, stockInfo) => {
-  const resArr = []
-  let temp = []
-  arr.log.forEach((item) => {
-    if (temp.length === 0 && item.businessSignalBCase.data2 < stockInfo.businessSignalB) {
-      temp.push({
-        name: 'B',
-        xAxis: item.price,
-        date: item.priceDate,
-      })
-      temp.push([])
-    } else if (temp.length > 0 && item.businessSignalBCase.data2 < stockInfo.businessSignalB) {
-      temp[1] = {
-        name: 'B',
-        xAxis: item.price,
-        date: item.priceDate,
-      }
-    } else if (
-      temp.length > 0 &&
-      (item.businessSignalBCase.data2 || 1000) >= stockInfo.businessSignalB
-    ) {
-      resArr.push(temp)
-      temp = []
-    }
-  })
-  console.log('resArr', resArr)
-  return resArr
-}
-
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-
-const getAllApi = async () => {
-  const dateList = getPastMonthsFirstDays(240)
-  console.log('START', dateList)
-  console.log('START')
-
-  try {
-    for (let i = 0; i < dateList.length; i++) {
-      await delay(3000)
-      const res = await getStock({
-        date: dateList[i],
-        stockNo: '0050',
-        response: 'json',
-        _: new Date().getTime(),
-      })
-      console.log(i)
-      console.log(res.data.data)
-      apiList.value.push(...res.data.data)
-      // 排序函式
-      apiList.value.sort((a, b) => {
-        // 將日期字串轉換為時間戳記進行比較
-        const dateA = new Date(a[0])
-        const dateB = new Date(b[0])
-        return dateA - dateB
-      })
-      apiList.value = convertStockDataToEChartsFormat(apiList.value)
-      console.log('apiList.value', apiList.value)
-    }
-
-    console.log('API GET done')
-    console.log('apiList SUS', apiList.value)
-  } catch (err) {
-    console.log('error')
-    apiList.value.sort((a, b) => {
-      // 將日期字串轉換為時間戳記進行比較
-      const dateA = new Date(a[0])
-      const dateB = new Date(b[0])
-      return dateA - dateB
-    })
-    apiList.value = convertStockDataToEChartsFormat(apiList.value)
-    console.log('apiList ERROR', apiList.value)
-
-    console.error(err)
-  }
-}
-
 onMounted(() => {
-  // getAllApi()
-  // console.log('historStockMarket', historStockMarket)
-  historStockMarketRange.value = historStockMarket
-  dateRange.value = [
-    `${historStockMarket[0].date}-01`,
-    `${historStockMarket[historStockMarket.length - 1].date}-01`,
-  ]
   // buildECharts()
 })
 </script>

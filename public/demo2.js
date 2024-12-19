@@ -61,6 +61,8 @@ export const ecoScoreStrategy = (historStock, myStockInfo) => {
     const pmiCase = pmiData.data < myStockInfo.pmi.index // pmi 條件
     const businessSignalACase = businessSignal.data < myStockInfo.businessSignalA.index // 領先指標條件
     const businessSignalBCase = businessSignal.data2 < myStockInfo.businessSignalB.index // 景氣信號條件
+    let buyingAveragePrice = myStockInfo.totalBuyingAmount / myStockInfo.totalStockCount // 總買入成本 / 總買入股數 = 總買入平均價格
+    const isLowBuyingAveragePrice = item.price < buyingAveragePrice
 
     let buyPrice = 0 // 本月買入金額
     let buyPricePlus = 0 // 定期不定額加碼金額
@@ -125,6 +127,11 @@ export const ecoScoreStrategy = (historStock, myStockInfo) => {
             resultType = 5
           }
           break
+        case 6:
+          if (isLowBuyingAveragePrice) {
+            resultType = 6
+          }
+          break
       }
       return resultType
     }
@@ -148,6 +155,9 @@ export const ecoScoreStrategy = (historStock, myStockInfo) => {
       }
     }
 
+    // 計算此輪平均買入成本
+    buyingAveragePrice = myStockInfo.totalBuyingAmount / myStockInfo.totalStockCount // 總買入成本 / 總買入股數 = 總買入平均價格
+
     // 記錄log
     myStockInfo.log.push({
       priceDate: item.date, // 本輪日期
@@ -162,10 +172,11 @@ export const ecoScoreStrategy = (historStock, myStockInfo) => {
       buyStockCount: (buyPrice + buyPricePlus) / item.price || 0, // 本輪買入股數 = (本輪買入金 + 本輪加碼金額) / 股價
       totalStockCount: myStockInfo.totalStockCount, // 本輪累積買入股數
       currentMoney: myStockInfo.currentMoney, // 本輪本金
+      buyingAveragePrice: buyingAveragePrice, // 買入成本
     })
   })
 
-  // 計算統計資料
+  // 計算最後統計資料
   myStockInfo.buyingAveragePrice = myStockInfo.totalBuyingAmount / myStockInfo.totalStockCount // 總買入成本 / 總買入股數 = 總買入平均價格
   // 取最後買入價格
   const latestData = historStock.length
@@ -210,7 +221,7 @@ const myStock = {
   pmi: { index: 50, dataList: historPmi }, // 買入策略-PMI index: 小於 50 買入, isOpen: true 打開 false 關閉, dataList: 歷史資料
   businessSignalA: { index: 100, dataList: businessSignals }, // 買入策略-領先指標 index:小於 100 買入, isOpen: true 打開 false 關閉, dataList: 歷史資料
   businessSignalB: { index: 17, dataList: businessSignals }, // 買入策略-景氣信號 index:: 小於 16 買入, isOpen: true 打開 false 關閉, dataList: 歷史資料
-  // 使用哪種策略 0: 每月買入 1: 全部符合 2: 單一符合 3: 只用 PMI, 4: 只用領先指標, 5: 只用景氣信號
+  // 使用哪種策略 0: 每月買入 1: 全部符合 2: 單一符合 3: 只用 PMI, 4: 只用領先指標, 5: 只用景氣信號 6: 平均成本
   strategyType: 3,
 
   // 買入金額
