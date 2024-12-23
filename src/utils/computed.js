@@ -57,7 +57,14 @@ export const technicalAnalysisStrategy = (
     const isMa60Top = item.price[1] >= item.ma60 // 收盤價是否站上60均線
     const isMa120Top = item.price[1] >= item.ma120 // 收盤價是否站上120均線
     const isMa240Top = item.price[1] >= item.ma240 // 收盤價是否站上240均線
-    if (isMa240Top) {
+    const strategyTypeMap = {
+      ma20: isMa20Top,
+      ma60: isMa60Top,
+      ma120: isMa120Top,
+      ma240: isMa240Top,
+    }
+    const strategyType = strategyTypeMap[myStockInfo.strategyType]
+    if (strategyType) {
       // 買入
       if (myStockInfo.status === 0) {
         buyPrice = myStockInfo.currentMoney
@@ -67,7 +74,7 @@ export const technicalAnalysisStrategy = (
         myStockInfo.totalBuyingAmount += buyPrice // 總買入成本
         myStockInfo.buyingCount += 1 // 買入數+1
         myStockInfo.status = 1 // 已買入
-        console.log('買入', item.date, item.price[1])
+        // console.log('買入', item.date, item.price[1])
       }
     } else {
       // 賣出
@@ -78,7 +85,7 @@ export const technicalAnalysisStrategy = (
         myStockInfo.totalBuyingAmount = 0 // 總買入成本
         myStockInfo.sallCount += 1 // 賣出數+1
         myStockInfo.status = 0 // 已賣出
-        console.log('賣出', item.date, item.price[1])
+        // console.log('賣出', item.date, item.price[1])
       }
     }
 
