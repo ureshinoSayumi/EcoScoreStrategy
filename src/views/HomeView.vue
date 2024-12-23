@@ -299,10 +299,9 @@ import { historPmi } from '@/utils/data/historPmi.js'
 import { businessSignals } from '@/utils/data/businessSignals.js' // 景氣信號、領先指標
 import { historStockMarket } from '@/utils/data/historStockMarket.js'
 import { intlNumberFormat } from '@/utils/number.js'
-import { filterAndSortByDate, getPastMonthsFirstDays } from '@/utils/date.js'
+import { filterAndSortByDate } from '@/utils/date.js'
 import { strategyTypeOption, buyTypeOpton, getOptionLabel } from '@/utils/optionMap.js'
 import * as echarts from 'echarts'
-import { convertStockDataToEChartsFormat } from '@/utils/ECharts.js'
 import { getStock } from '@/api/app.js'
 import CandlestickChart from '@/components/CandlestickChart.vue'
 import DefaultChart from '@/components/DefaultChart.vue'
@@ -360,7 +359,6 @@ const totalList = ref([
 const historStockMarketRange = ref([])
 const dateRange = ref([]) // 日期區間
 const activeIndex = ref(null) // 當前選取的 card
-const apiList = ref([]) // API回來的資訊
 const isShowChart = ref(false) // 是否顯示圖表
 const activeRange = ref([])
 
@@ -574,56 +572,7 @@ const getBusinessSignalBRange = (arr, stockInfo) => {
   return resArr
 }
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-
-const getAllApi = async () => {
-  const dateList = getPastMonthsFirstDays(240)
-  console.log('START', dateList)
-  console.log('START')
-
-  try {
-    for (let i = 0; i < dateList.length; i++) {
-      await delay(3000)
-      const res = await getStock({
-        date: dateList[i],
-        stockNo: '0050',
-        response: 'json',
-        _: new Date().getTime(),
-      })
-      console.log(i)
-      console.log(res.data.data)
-      apiList.value.push(...res.data.data)
-      // 排序函式
-      apiList.value.sort((a, b) => {
-        // 將日期字串轉換為時間戳記進行比較
-        const dateA = new Date(a[0])
-        const dateB = new Date(b[0])
-        return dateA - dateB
-      })
-      apiList.value = convertStockDataToEChartsFormat(apiList.value)
-      console.log('apiList.value', apiList.value)
-    }
-
-    console.log('API GET done')
-    console.log('apiList SUS', apiList.value)
-  } catch (err) {
-    console.log('error')
-    apiList.value.sort((a, b) => {
-      // 將日期字串轉換為時間戳記進行比較
-      const dateA = new Date(a[0])
-      const dateB = new Date(b[0])
-      return dateA - dateB
-    })
-    apiList.value = convertStockDataToEChartsFormat(apiList.value)
-    console.log('apiList ERROR', apiList.value)
-
-    console.error(err)
-  }
-}
-
 onMounted(() => {
-  // getAllApi()
-  // console.log('historStockMarket', historStockMarket)
   historStockMarketRange.value = historStockMarket
   dateRange.value = [
     `${historStockMarket[0].date}-01`,

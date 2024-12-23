@@ -15,6 +15,11 @@ const router = createRouter({
       component: () => import('@/views/TechnicalAnalysis/index.vue'),
     },
     {
+      path: '/fetchStock',
+      name: 'fetchStock',
+      component: () => import('@/views/ApiGet/index.vue'),
+    },
+    {
       path: '/about',
       name: 'about',
       // route level code-splitting

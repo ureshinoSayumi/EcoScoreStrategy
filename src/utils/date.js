@@ -1,3 +1,12 @@
+// 輸入：一個 Date 物件
+// 輸出：格式化的日期字串，格式為 'YYYYMMDD'
+export const formatDateToYYYYMMDD = (date) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0') // 月份从0开始
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}${month}${day}`
+}
+
 // 取得指定區間的日期
 // range: 日期區間, data: 歷史股價
 // 日期格式 YYYY-MM
@@ -23,6 +32,7 @@ export const filterAndSortByDate = (range, data) => {
   return sortedData
 }
 
+// 跟上面那個差在字串沒有-
 export const filterAndSortByDate2 = (range, data) => {
   // 解構日期範圍，並轉為 Date 物件方便比較
   const [startDateStr, endDateStr] = range
