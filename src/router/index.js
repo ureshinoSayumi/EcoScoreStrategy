@@ -19,6 +19,12 @@ const router = createRouter({
       name: 'fetchStock',
       component: () => import('@/views/ApiGet/index.vue'),
     },
+    // 交易紀錄分析
+    {
+      path: '/recordAnalysis',
+      name: 'recordAnalysis',
+      component: () => import('@/views/RecordAnalysis/index.vue'),
+    },
     {
       path: '/about',
       name: 'about',

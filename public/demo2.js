@@ -1,7 +1,7 @@
-import { historStockMarket } from '../src/utils/data/historStockMarket.js' // 歷史股價
-import { businessSignals } from '../src/utils/data/businessSignals.js' // 景氣指標
-import { historPmi } from '../src/utils/data/historPmi.js'
 import { findBusinessSignalsIndex } from '../src/utils/calculateStock.js'
+import { businessSignals } from '../src/utils/data/businessSignals.js'; // 景氣指標
+import { historPmi } from '../src/utils/data/historPmi.js'
+import { historStockMarket } from '../src/utils/data/historStockMarket.js'; // 歷史股價
 
 /**
  * 依據丟入的歷史股價資訊進行策略買進
@@ -181,8 +181,8 @@ export const ecoScoreStrategy = (historStock, myStockInfo) => {
   // 取最後買入價格
   const latestData = historStock.length
     ? historStock.reduce((earliest, current) => {
-        return new Date(current.date) > new Date(earliest.date) ? current : earliest
-      })
+      return new Date(current.date) > new Date(earliest.date) ? current : earliest
+    })
     : {}
   myStockInfo.totalMarketValue = myStockInfo.totalStockCount * latestData.price // 總市值 用最後一個收盤日
   return myStockInfo
@@ -263,13 +263,13 @@ const myStock = {
 }
 ecoScoreStrategy(historStockMarket, myStock)
 
-console.log('log', myStock.log)
-console.log('當前存款', myStock.currentMoney)
-console.log('買入次數', myStock.buyingCount)
-console.log('加碼次數', myStock.buyingCountPlus)
-console.log('沒買入次數', historStockMarket.length - myStock.buyingCount)
-// console.log('沒買入次數', myStock.notBuyingCount)
-console.log('總買入成本', myStock.totalBuyingAmount)
-console.log('總買入股數', myStock.totalStockCount)
-console.log('總買入平均價格', myStock.buyingAveragePrice)
-console.log('總市值', myStock.totalMarketValue)
+// console.log('log', myStock.log)
+// console.log('當前存款', myStock.currentMoney)
+// console.log('買入次數', myStock.buyingCount)
+// console.log('加碼次數', myStock.buyingCountPlus)
+// console.log('沒買入次數', historStockMarket.length - myStock.buyingCount)
+// // console.log('沒買入次數', myStock.notBuyingCount)
+// console.log('總買入成本', myStock.totalBuyingAmount)
+// console.log('總買入股數', myStock.totalStockCount)
+// console.log('總買入平均價格', myStock.buyingAveragePrice)
+// console.log('總市值', myStock.totalMarketValue)

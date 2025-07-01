@@ -179,13 +179,11 @@
   </el-container>
 </template>
 <script lang="ts" setup>
-import { ref, reactive, onMounted, computed } from 'vue'
-import { historStockMarket } from '@/utils/data/historStockMarket.js'
-import { intlNumberFormat } from '@/utils/number.js'
-import { filterAndSortByDate2 } from '@/utils/date.js'
-import { strategyTypeOptionAverageLine, buyTypeOpton, getOptionLabel } from '@/utils/optionMap.js'
-import { stock0050_20100104_20241209, stock00631L_20141031_20241223 } from '@/utils/stockList.js'
 import { technicalAnalysisStrategy } from '@/utils/computed.js'
+import { filterAndSortByDate2 } from '@/utils/date.js'
+import { intlNumberFormat } from '@/utils/number.js'
+import { stock0050_20100104_20241209, stock00631L_20141031_20241223 } from '@/utils/stockList.js'
+import { onMounted, reactive, ref } from 'vue'
 
 // 策略選項
 const useIndicatorOptions = [
