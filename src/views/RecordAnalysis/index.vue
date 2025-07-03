@@ -30,7 +30,8 @@
             </el-space>
             <template #footer>
               <el-space direction="vertical" alignment="flex-start">
-                <el-text>總買入平均價格: {{ totalReturn }}</el-text>
+                <el-text>總報酬: {{ totalReturn }}</el-text>
+                <el-text>區間最大回徹: {{ maxDrawdownValue }}％</el-text>
               </el-space>
             </template>
           </el-card>
@@ -55,16 +56,34 @@
         <div ref="myChartDom3" style="width: 1500px; height: 600px"></div>
       </div>
 
+      <!-- 交易月報酬分布 -->
+      <!-- 統計1～12月買入報酬分布 -->
+      <div style="width: 100%; overflow-x: scroll">
+        <div ref="myChartDom6" style="width: 1500px; height: 600px"></div>
+      </div>
+
+       <!-- 交易月最高最低期報酬分布 -->
+      <!-- 統計1～12月買入報酬分布 -->
+      <div style="width: 100%; overflow-x: scroll">
+        <div ref="myChartDom7" style="width: 1500px; height: 600px"></div>
+      </div>
+
+
+
       <!-- 每年報酬 -->
       <!-- 一年會單位統計滾動績效 -->
       <div style="width: 100%; overflow-x: scroll">
         <div ref="myChartDom4" style="width: 1500px; height: 600px"></div>
       </div>
 
-      <!-- 每年報酬 -->
-      <!-- 一年會單位統計滾動績效 -->
+      <!-- 模擬資金報酬曲線 -->
       <div style="width: 100%; overflow-x: scroll">
         <div ref="myChartDom5" style="width: 1500px; height: 600px"></div>
+      </div>
+
+      <!-- 模擬資金報酬曲線 -->
+      <div style="width: 100%; overflow-x: scroll">
+        <div ref="myChartDom8" style="width: 1500px; height: 600px"></div>
       </div>
 
       <!-- 表格 -->
@@ -113,11 +132,15 @@ const myChartDom = ref() // 報酬率分佈圖
 const myChartDom2 = ref() // 每月交易次數分布
 const myChartDom3 = ref() // 交易日期報酬分布
 const myChartDom4 = ref() // 每年報酬
-const myChartDom5 = ref() // 第四張圖表容器
-const rounds = ref(60)
+const myChartDom5 = ref() // 模擬資金報酬曲線
+const myChartDom6 = ref() // 第四張圖表容器
+const myChartDom7 = ref() // 第四張圖表容器
+const myChartDom8 = ref() // 第四張圖表容器
+const rounds = ref(40)
 const stocksPerRound = ref(5)
 const holdDays = ref(60)
-const totalReturn = ref(0)
+const totalReturn = ref('')
+const maxDrawdownValue = ref()
 
 const reset = () => {
   myChartDom.value = null
@@ -146,6 +169,7 @@ const profitLossRatio = computed(() => {
   const losses = returns.filter(r => r < 0)
 
   const avgProfit = profits.reduce((a, b) => a + b, 0) / (profits.length || 1)
+
   const avgLoss = losses.reduce((a, b) => a + b, 0) / (losses.length || 1)
 
   if (avgLoss === 0) return Infinity // 沒虧損交易，賺賠比無限大
@@ -209,12 +233,181 @@ const handleFile = async (event) => {
     buildChart2()
     buildChart3()
     buildChart4()
-    buildChart5(50000, rounds.value, stocksPerRound.value, holdDays.value)
-    // 計算單比資金複利報酬
-    // simulateEvenlySplitBacktest()
+    // buildChart5(50000, rounds.value, stocksPerRound.value)
+    buildChart6()
+    buildChart7()
+
+
+    // 資金總報酬率
+    // simulateMax5Positions(10000, 1)
+    simulateMax5Positions(10000, 10)
+
+    // simulateMax5Positions(10000, 10)
 
   }
 }
+
+const simulateMax5Positions = (initialCapital = 10000, length) => {
+  const getDate = (str) => new Date(str.replaceAll('/', '-'))
+
+  let capital = initialCapital
+  let positions = [] // { stock, buyDate, sellDate, capitalUsed }
+  const history = []
+
+  // 照 buyDay 排序
+  const sorted = tableData.value
+    .filter(i =>
+      i.buyDay && i.sellDay &&
+      !isNaN(parseFloat(i.return))
+    )
+    .sort((a, b) => getDate(a.buyDay) - getDate(b.buyDay))
+
+  sorted.forEach(stock => {
+    const buyDate = getDate(stock.buyDay)
+    const sellDate = getDate(stock.sellDay)
+
+    // ✅ 先檢查目前持有的部位，有沒有該出場的
+    for (let i = positions.length - 1; i >= 0; i--) {
+      if (buyDate >= positions[i].sellDate) {
+        const pos = positions[i]
+        const r = parseFloat(pos.stock.return)
+        const profit = !isNaN(r)
+          ? pos.capitalUsed * (1 + r)
+          : pos.capitalUsed
+        capital += profit
+        positions.splice(i, 1)
+      }
+    }
+
+    // ✅ 若持倉未滿 length 檔，就進場
+    if (positions.length < length) {
+      const vacant = length - positions.length
+      const capitalPerStock = capital / vacant
+      if (capitalPerStock <= 0) return
+
+      capital -= capitalPerStock
+
+      positions.push({
+        stock,
+        buyDate,
+        sellDate,
+        capitalUsed: capitalPerStock
+      })
+
+      const positionCost = positions.reduce((sum, p) => sum + p.capitalUsed, 0)
+      const netAsset = capital + positionCost
+
+      history.push({
+        capitalPerStock: capitalPerStock,
+        buyDay: stock.buyDay,
+        sellDay: stock.sellDay,
+        name: stock.name,
+        return: (parseFloat(stock.return) * 100).toFixed(2) + '%',
+        capital: capital.toFixed(2), // 現金
+        positionCount: positions.length, // 持倉比數
+        netAsset: netAsset, // 總資產
+        returnRate: ((netAsset / initialCapital - 1) * 100).toFixed(2) // 總報酬率
+      })
+    }
+  })
+
+  // ✅ 最後：把剩下部位也出場
+  positions.forEach(pos => {
+    const r = parseFloat(pos.stock.return)
+    const profit = !isNaN(r)
+      ? pos.capitalUsed * (1 + r)
+      : pos.capitalUsed
+    capital += profit
+  })
+
+  const finalReturn = ((capital / initialCapital - 1) * 100).toFixed(2)
+
+  // ✅ 計算最大回撤
+  let maxAsset = parseFloat(history[0]?.netAsset || 0)
+  let maxDrawdown = 0
+  let sdate = ''
+  let edate = ''
+
+  history.forEach(h => {
+    const net = parseFloat(h.netAsset)
+    if (net > maxAsset) {
+      maxAsset = net
+      edate = h.buyDay
+    }
+    const dd = (maxAsset - net) / maxAsset
+    if (dd > maxDrawdown) {
+      maxDrawdown = dd
+      sdate = h.sellDay
+    }
+  })
+
+
+  console.log(`📊 模擬結果：最多同時持有 ${length} 檔（等權重）`)
+  console.log('✅ 初始資金：$', initialCapital)
+  console.log('✅ 最終資金：$', capital.toFixed(2))
+  console.log('✅ 總報酬率：', finalReturn + '%')
+  console.log('✅ 最大回撤:', (maxDrawdown * 100).toFixed(2) + '%')
+
+  console.log(history)
+  console.log('sdate', sdate);
+  console.log('edate', edate);
+
+
+  totalReturn.value = finalReturn
+  maxDrawdownValue.value = (maxDrawdown * 100).toFixed(2)
+
+
+
+
+
+  // 輸出圖表
+  // 計算 netAsset（市值 = 現金 + 成本，這裡不含未實現盈虧，純成本）
+  const chart = echarts.init(myChartDom8.value)
+
+  chart.setOption({
+    title: { text: '資金 / 持倉成本 / 資產走勢圖' },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params) => {
+        const i = params[0].dataIndex
+        const d = history[i]
+        return `
+          日期：${d.buyDay}<br/>
+          現金：$${d.capital}<br/>
+          總資產（估算）：$${parseFloat(d.netAsset)}<br/>
+          報酬率: ${d.returnRate}%
+        `
+      }
+    },
+    legend: {
+      data: ['現金', '總資產']
+    },
+    xAxis: {
+      type: 'category',
+      data: history.map(h => h.buyDay),
+      axisLabel: { rotate: 45 }
+    },
+    yAxis: {
+      type: 'value',
+      name: '金額（元）'
+    },
+    series: [
+      {
+        name: '現金',
+        type: 'line',
+        data: history.map(h => parseFloat(h.capital))
+      },
+      {
+        name: '總資產',
+        type: 'line',
+        data: history.map(h => parseFloat(h.netAsset))
+      }
+    ]
+  })
+}
+
+
+
 // 報酬率分佈圖
 const buildChart = () => {
   const returns = tableData.value.map(i => parseFloat(i.return)).filter(r => !isNaN(r)).map(r => r * 100)
@@ -436,6 +629,156 @@ const buildChart3 = () => {
     ]
   })
 }
+// 依據每筆交易的 buyDay，統計各月份報酬
+const buildChart6 = () => {
+  const monthStats = {}
+
+  // 初始化 1～12 月
+  for (let m = 1; m <= 12; m++) {
+    monthStats[m] = []
+  }
+
+  // 將報酬值分類到對應的月份
+  tableData.value.forEach(item => {
+    const monthStr = item.buyDay?.split('/')?.[1] // 取 MM 月份
+    const month = Number(monthStr)
+    const r = parseFloat(item.return)
+    if (!isNaN(month) && month >= 1 && month <= 12 && !isNaN(r)) {
+      monthStats[month].push(r * 100)
+    }
+  })
+
+  const months = Array.from({ length: 12 }, (_, i) => (i + 1).toString())
+  const avgReturns = []
+  const medianReturns = []
+  const winRates = []
+  const counts = []
+
+  for (let m = 1; m <= 12; m++) {
+    const returns = monthStats[m]
+    const n = returns.length
+    const wins = returns.filter(r => r > 0).length
+
+    const avg = n ? (returns.reduce((a, b) => a + b, 0) / n) : 0
+    const sorted = [...returns].sort((a, b) => a - b)
+    const median = n
+      ? (n % 2 === 1
+        ? sorted[Math.floor(n / 2)]
+        : (sorted[n / 2 - 1] + sorted[n / 2]) / 2)
+      : 0
+    const winRate = n ? (wins / n) * 100 : 0
+
+    avgReturns.push(avg.toFixed(2))
+    medianReturns.push(median.toFixed(2))
+    winRates.push(winRate.toFixed(2))
+    counts.push(n)
+  }
+
+  // 畫圖
+  const chart = echarts.init(myChartDom6.value)
+  chart.setOption({
+    title: { text: '每年月份進場報酬統計' },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params) => {
+        const i = params[0].dataIndex
+        return `
+          月份：${months[i]} 月<br/>
+          筆數：${counts[i]}<br/>
+          平均報酬：${avgReturns[i]}%<br/>
+          中位報酬：${medianReturns[i]}%<br/>
+          勝率：${winRates[i]}%
+        `
+      }
+    },
+    legend: { data: ['平均報酬', '中位報酬', '勝率'] },
+    xAxis: {
+      type: 'category',
+      data: months,
+      name: '月份',
+      nameLocation: 'middle',
+      nameGap: 25
+    },
+    yAxis: {
+      type: 'value',
+      name: '報酬 / 勝率（%）'
+    },
+    series: [
+      { name: '平均報酬', type: 'line', data: avgReturns },
+      { name: '中位報酬', type: 'line', data: medianReturns },
+      { name: '勝率', type: 'line', data: winRates }
+    ]
+  })
+}
+// 統計每月最高與最低報酬
+const buildChart7 = () => {
+  const monthStats = {}
+
+  // 初始化 1～12 月
+  for (let m = 1; m <= 12; m++) {
+    monthStats[m] = []
+  }
+
+  // 將報酬分類到對應月份
+  tableData.value.forEach(item => {
+    const monthStr = item.buyDay?.split('/')?.[1] // MM 月
+    const month = Number(monthStr)
+    const r = parseFloat(item.return)
+    if (!isNaN(month) && month >= 1 && month <= 12 && !isNaN(r)) {
+      monthStats[month].push(r * 100)
+    }
+  })
+
+  const months = Array.from({ length: 12 }, (_, i) => (i + 1).toString())
+  const maxReturns = []
+  const minReturns = []
+
+  for (let m = 1; m <= 12; m++) {
+    const returns = monthStats[m]
+    if (returns.length > 0) {
+      const max = Math.max(...returns)
+      const min = Math.min(...returns)
+      maxReturns.push(max.toFixed(2))
+      minReturns.push(min.toFixed(2))
+    } else {
+      maxReturns.push('0')
+      minReturns.push('0')
+    }
+  }
+
+  const chart = echarts.init(myChartDom7.value)
+  chart.setOption({
+    title: { text: '每月報酬率最高與最低值' },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params) => {
+        const i = params[0].dataIndex
+        return `
+          月份：${months[i]} 月<br/>
+          最高報酬率：${maxReturns[i]}%<br/>
+          最低報酬率：${minReturns[i]}%
+        `
+      }
+    },
+    legend: { data: ['最高報酬率', '最低報酬率'] },
+    xAxis: {
+      type: 'category',
+      data: months,
+      name: '月份',
+      nameLocation: 'middle',
+      nameGap: 25
+    },
+    yAxis: {
+      type: 'value',
+      name: '報酬率（%）'
+    },
+    series: [
+      { name: '最高報酬率', type: 'line', data: maxReturns },
+      { name: '最低報酬率', type: 'line', data: minReturns }
+    ]
+  })
+}
+120
 // 統計每年滾動報酬
 const buildChart4 = () => {
   const yearlyStats = {}
@@ -507,12 +850,12 @@ const buildChart4 = () => {
     ]
   })
 }
+
 // 統計複利報酬
 const buildChart5 = (
   initialCapital = 50000,
-  rounds = 180,
+  rounds = 40,
   stocksPerRound = 5,
-  holdDays = 30
 ) => {
   const sorted = [...tableData.value].sort(
     (a, b) => new Date(a.buyDay).getTime() - new Date(b.buyDay).getTime()
@@ -550,11 +893,10 @@ const buildChart5 = (
     }
 
     capital = total
-    const endDate = addDays(chunk[0]?.buyDay, holdDays)
 
     history.push({
       round: round + 1,
-      date: endDate,
+      date: chunk[0].sellDay,
       capital: capital,
       return: ((capital / initialCapital - 1) * 100).toFixed(2),
       stocks: chunk  // ✅ 新增這一輪買入的股票清單
@@ -565,6 +907,22 @@ const buildChart5 = (
 
   console.log('模擬總資金:', capital.toFixed(2))
   totalReturn.value = capital
+
+  // 計算最大回撤
+  let maxCapital = history[0].capital
+  let maxDrawdown = 0
+
+  for (const h of history) {
+    if (h.capital > maxCapital) {
+      maxCapital = h.capital
+    }
+    const drawdown = (maxCapital - h.capital) / maxCapital
+    if (drawdown > maxDrawdown) {
+      maxDrawdown = drawdown
+    }
+  }
+  // 顯示額外數值用
+  maxDrawdownValue.value = (maxDrawdown * 100).toFixed(2)
 
   console.log('輪替歷程:', history)
 
@@ -601,6 +959,7 @@ const buildChart5 = (
     }]
   })
 }
+
 
 onMounted(() => {
   // buildECharts()
