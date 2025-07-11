@@ -3,7 +3,10 @@
     <el-main>
       <el-row :gutter="20">
         <el-col>
-           <input type="file" accept=".csv" @change="handleFile" />
+          <input type="file" accept=".csv" @change="handleFile" />
+          <el-form-item label="檔案名稱">
+             <el-text>{{ fileName }}</el-text>
+           </el-form-item>
            <el-form-item label="執行輪數">
              <el-input-number v-model="rounds" :min="0" size="small" />
            </el-form-item>
@@ -32,6 +35,7 @@
               <el-space direction="vertical" alignment="flex-start">
                 <el-text>總報酬: {{ totalReturn }}</el-text>
                 <el-text>區間最大回徹: {{ maxDrawdownValue }}％</el-text>
+                <el-text>輪動次數: {{ rotationsNumber }}</el-text>
               </el-space>
             </template>
           </el-card>
@@ -70,15 +74,12 @@
 
 
 
+
+
       <!-- 每年報酬 -->
       <!-- 一年會單位統計滾動績效 -->
       <div style="width: 100%; overflow-x: scroll">
         <div ref="myChartDom4" style="width: 1500px; height: 600px"></div>
-      </div>
-
-      <!-- 模擬資金報酬曲線 -->
-      <div style="width: 100%; overflow-x: scroll">
-        <div ref="myChartDom5" style="width: 1500px; height: 600px"></div>
       </div>
 
       <!-- 模擬資金報酬曲線 -->
@@ -132,7 +133,6 @@ const myChartDom = ref() // 報酬率分佈圖
 const myChartDom2 = ref() // 每月交易次數分布
 const myChartDom3 = ref() // 交易日期報酬分布
 const myChartDom4 = ref() // 每年報酬
-const myChartDom5 = ref() // 模擬資金報酬曲線
 const myChartDom6 = ref() // 第四張圖表容器
 const myChartDom7 = ref() // 第四張圖表容器
 const myChartDom8 = ref() // 第四張圖表容器
@@ -141,6 +141,8 @@ const stocksPerRound = ref(5)
 const holdDays = ref(60)
 const totalReturn = ref('')
 const maxDrawdownValue = ref()
+const rotationsNumber = ref(0)
+const fileName = ref('')
 
 const reset = () => {
   myChartDom.value = null
@@ -209,6 +211,7 @@ const winRate = computed(() => {
 
 const handleFile = async (event) => {
   const file = event.target.files?.[0];
+  fileName.value = file.name
   if (file) {
     const data = await parseCSV(file);
     console.log('CSV資料:', data);
@@ -233,14 +236,13 @@ const handleFile = async (event) => {
     buildChart2()
     buildChart3()
     buildChart4()
-    // buildChart5(50000, rounds.value, stocksPerRound.value)
     buildChart6()
     buildChart7()
 
 
     // 資金總報酬率
     // simulateMax5Positions(10000, 1)
-    simulateMax5Positions(10000, 10)
+    simulateMax5Positions(10000, stocksPerRound.value)
 
     // simulateMax5Positions(10000, 10)
 
@@ -327,17 +329,21 @@ const simulateMax5Positions = (initialCapital = 10000, length) => {
   let maxDrawdown = 0
   let sdate = ''
   let edate = ''
+  const sdateArr = []
+  const edateArr = []
 
   history.forEach(h => {
     const net = parseFloat(h.netAsset)
     if (net > maxAsset) {
       maxAsset = net
       edate = h.buyDay
+      edateArr.push(edate)
     }
     const dd = (maxAsset - net) / maxAsset
     if (dd > maxDrawdown) {
       maxDrawdown = dd
       sdate = h.sellDay
+      sdateArr.push(sdate)
     }
   })
 
@@ -347,15 +353,19 @@ const simulateMax5Positions = (initialCapital = 10000, length) => {
   console.log('✅ 最終資金：$', capital.toFixed(2))
   console.log('✅ 總報酬率：', finalReturn + '%')
   console.log('✅ 最大回撤:', (maxDrawdown * 100).toFixed(2) + '%')
+  console.log('輪動次數', history.length);
+
 
   console.log(history)
   console.log('sdate', sdate);
   console.log('edate', edate);
+  console.log('sdateArr', sdateArr);
+  console.log('edateArr', edateArr);
 
 
   totalReturn.value = finalReturn
   maxDrawdownValue.value = (maxDrawdown * 100).toFixed(2)
-
+  rotationsNumber.value = history.length
 
 
 
@@ -850,116 +860,6 @@ const buildChart4 = () => {
     ]
   })
 }
-
-// 統計複利報酬
-const buildChart5 = (
-  initialCapital = 50000,
-  rounds = 40,
-  stocksPerRound = 5,
-) => {
-  const sorted = [...tableData.value].sort(
-    (a, b) => new Date(a.buyDay).getTime() - new Date(b.buyDay).getTime()
-  )
-
-  const chunkSize = Math.floor(sorted.length / rounds)
-  let capital = initialCapital
-  const history = []
-
-  const addDays = (dateStr, days) => {
-    const d = new Date(dateStr)
-    d.setDate(d.getDate() + days)
-    return d.toISOString().split('T')[0]
-  }
-
-  for (let round = 0; round < rounds; round++) {
-    const startIndex = round * chunkSize
-    // 固定挑每輪前5檔
-    const chunk = sorted.slice(startIndex, startIndex + chunkSize).slice(0, stocksPerRound)
-    // 隨機挑該輪5檔
-    // const pool = sorted.slice(startIndex, startIndex + chunkSize)
-    // const shuffled = pool.sort(() => Math.random() - 0.5)
-    // const chunk = shuffled.slice(0, stocksPerRound)
-
-    let total = 0
-    const capitalPerStock = capital / chunk.length
-
-    for (const stock of chunk) {
-      const r = parseFloat(stock.return)
-      if (!isNaN(r)) {
-        total += capitalPerStock * (1 + r)
-      } else {
-        total += capitalPerStock // 當作沒漲跌
-      }
-    }
-
-    capital = total
-
-    history.push({
-      round: round + 1,
-      date: chunk[0].sellDay,
-      capital: capital,
-      return: ((capital / initialCapital - 1) * 100).toFixed(2),
-      stocks: chunk  // ✅ 新增這一輪買入的股票清單
-
-    })
-
-  }
-
-  console.log('模擬總資金:', capital.toFixed(2))
-  totalReturn.value = capital
-
-  // 計算最大回撤
-  let maxCapital = history[0].capital
-  let maxDrawdown = 0
-
-  for (const h of history) {
-    if (h.capital > maxCapital) {
-      maxCapital = h.capital
-    }
-    const drawdown = (maxCapital - h.capital) / maxCapital
-    if (drawdown > maxDrawdown) {
-      maxDrawdown = drawdown
-    }
-  }
-  // 顯示額外數值用
-  maxDrawdownValue.value = (maxDrawdown * 100).toFixed(2)
-
-  console.log('輪替歷程:', history)
-
-  // 畫圖表
-  const chart = echarts.init(myChartDom5.value)
-  chart.setOption({
-    title: { text: '模擬資金報酬曲線' },
-    tooltip: {
-      trigger: 'axis',
-      formatter: (params) => {
-        const item = params[0]
-        const d = history[item.dataIndex]
-        return `
-          時間：${d.date}<br/>
-          資金：$${d.capital.toFixed(2)}<br/>
-          累積報酬率：${d.return}%
-        `
-      }
-    },
-    xAxis: {
-      type: 'category',
-      name: '時間',
-      data: history.map(h => h.date),
-      axisLabel: { rotate: 45 }
-    },
-    yAxis: {
-      type: 'value',
-      name: '累積報酬率 (%)'
-    },
-    series: [{
-      type: 'line',
-      name: '累積報酬率',
-      data: history.map(h => parseFloat(h.return))
-    }]
-  })
-}
-
 
 onMounted(() => {
   // buildECharts()
