@@ -213,6 +213,7 @@ const handleFile = async (event) => {
   const file = event.target.files?.[0];
   fileName.value = file.name
   if (file) {
+    document.title = file.name; // 修改網頁標籤的標題
     const data = await parseCSV(file);
     console.log('CSV資料:', data);
     tableData.value = data.map(item => {
