@@ -35,7 +35,12 @@
               <el-space direction="vertical" alignment="flex-start">
                 <el-text>總報酬: {{ totalReturn }}</el-text>
                 <el-text>區間最大回徹: {{ maxDrawdownValue }}％</el-text>
+                <el-text>年度平均報酬率: {{ annualReturn }}％</el-text>
+                <el-text>年度中位數報酬率: {{ medianAnnualReturn }}％</el-text>
+                <el-text>最差年度報酬率: {{ worstAnnualReturn }}％</el-text>
+                <el-text>最佳年度報酬率: {{ bestAnnualReturn }}％</el-text>
                 <el-text>輪動次數: {{ rotationsNumber }}</el-text>
+
               </el-space>
             </template>
           </el-card>
@@ -136,13 +141,17 @@ const myChartDom4 = ref() // 每年報酬
 const myChartDom6 = ref() // 第四張圖表容器
 const myChartDom7 = ref() // 第四張圖表容器
 const myChartDom8 = ref() // 第四張圖表容器
-const rounds = ref(40)
-const stocksPerRound = ref(5)
-const holdDays = ref(60)
-const totalReturn = ref('')
-const maxDrawdownValue = ref()
-const rotationsNumber = ref(0)
-const fileName = ref('')
+const rounds = ref(40) // 執行輪數
+const stocksPerRound = ref(10) // 持有限制
+const holdDays = ref(60) // 持有天數
+const totalReturn = ref('') // 總報酬率
+const maxDrawdownValue = ref() // 區間最大回徹
+const annualReturn = ref(0) // 年度平均報酬率
+const medianAnnualReturn = ref() // 年度中位數報酬率
+const worstAnnualReturn = ref() // 最差年度報酬率
+const bestAnnualReturn = ref() // 最佳年度報酬率
+const rotationsNumber = ref() // 輪動次數
+const fileName = ref('') // 檔案名稱
 
 const reset = () => {
   myChartDom.value = null
@@ -246,7 +255,6 @@ const handleFile = async (event) => {
     simulateMax5Positions(10000, stocksPerRound.value)
 
     // simulateMax5Positions(10000, 10)
-
   }
 }
 
@@ -348,12 +356,62 @@ const simulateMax5Positions = (initialCapital = 10000, length) => {
     }
   })
 
+  // 年化報酬率統計
+  const annualReturnMap = {}
+
+  history.forEach(h => {
+    const year = new Date(h.buyDay).getFullYear()
+    if (!annualReturnMap[year]) annualReturnMap[year] = []
+    annualReturnMap[year].push(h)
+  })
+
+  const annualReturns = []
+  const annualReturnsLog = []
+
+  for (const year in annualReturnMap) {
+    const records = annualReturnMap[year]
+
+    // 按日期排序確保第一筆、最後一筆
+    records.sort((a, b) => new Date(a.buyDay) - new Date(b.buyDay))
+
+    const start = records[0].netAsset
+    const end = records[records.length - 1].netAsset
+
+    if (!start || !end || start <= 0) continue
+
+    const r = (end / start - 1) * 100
+    annualReturns.push(r)
+    annualReturnsLog.push({
+      year: year,
+      start: start,
+      end: end,
+      return: r
+    })
+  }
+
+  // 統計
+  const mean = annualReturns.reduce((a, b) => a + b, 0) / annualReturns.length
+  const sorted2 = [...annualReturns].sort((a, b) => a - b)
+  const mid = Math.floor(sorted2.length / 2)
+  const median = sorted2.length % 2 === 0
+    ? (sorted2[mid - 1] + sorted2[mid]) / 2
+    : sorted2[mid]
+
+  const worst = sorted2[0]
+  const best = sorted2[sorted2 .length - 1]
+
 
   console.log(`📊 模擬結果：最多同時持有 ${length} 檔（等權重）`)
   console.log('✅ 初始資金：$', initialCapital)
   console.log('✅ 最終資金：$', capital.toFixed(2))
   console.log('✅ 總報酬率：', finalReturn + '%')
   console.log('✅ 最大回撤:', (maxDrawdown * 100).toFixed(2) + '%')
+  console.log('✅ 年度平均報酬率:', mean.toFixed(2) + '%')
+  console.log('✅ 年度中位數報酬率:', median.toFixed(2) + '%')
+  console.log('✅ 最差年度報酬率:', worst.toFixed(2) + '%')
+  console.log('✅ 最佳年度報酬率:', best.toFixed(2) + '%')
+  console.log('年度報酬', annualReturnsLog);
+
   console.log('輪動次數', history.length);
 
 
@@ -364,9 +422,13 @@ const simulateMax5Positions = (initialCapital = 10000, length) => {
   console.log('edateArr', edateArr);
 
 
-  totalReturn.value = finalReturn
-  maxDrawdownValue.value = (maxDrawdown * 100).toFixed(2)
-  rotationsNumber.value = history.length
+  totalReturn.value = finalReturn // 總報酬率
+  maxDrawdownValue.value = (maxDrawdown * 100).toFixed(2) // 區間最大回徹
+  rotationsNumber.value = history.length // 輪動次數
+  annualReturn.value = mean // 年度平均報酬率
+  medianAnnualReturn.value = median // 年度中位數報酬率
+  worstAnnualReturn.value = worst // 最差年度報酬率
+  bestAnnualReturn.value = best // 最佳年度報酬率
 
 
 
