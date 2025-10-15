@@ -16,6 +16,12 @@
            <el-form-item label="持有天數">
              <el-input-number v-model="holdDays" :min="0" size="small" />
            </el-form-item>
+           <el-form-item label="輸出圖表">
+             <el-switch v-model="outputChart" />
+           </el-form-item>
+           <el-form-item label="蒙地卡羅模擬">
+             <el-switch v-model="monteCarloTest" />
+           </el-form-item>
           <el-button type="primary" @click="reset()"> 重置 </el-button>
         </el-col>
       </el-row>
@@ -40,7 +46,7 @@
                 <el-text>最差年度報酬率: {{ worstAnnualReturn }}％</el-text>
                 <el-text>最佳年度報酬率: {{ bestAnnualReturn }}％</el-text>
                 <el-text>輪動次數: {{ rotationsNumber }}</el-text>
-
+                <el-text v-for="item in annualReturnLog" :key="item.year">{{ item.year }} : {{ item.return }}％</el-text>
               </el-space>
             </template>
           </el-card>
@@ -127,6 +133,7 @@ import { parseCSV } from '@/utils/csvReader';
 import { businessSignals } from '@/utils/data/businessSignals.js'; // 景氣指標
 import * as echarts from 'echarts';
 import { computed, onMounted, reactive, ref } from 'vue';
+import { calculateSimulationResult, runMonteCarlo } from './utils/monteCarloMethod';
 
 // 輸出報表
 const total = reactive({
@@ -150,8 +157,11 @@ const annualReturn = ref(0) // 年度平均報酬率
 const medianAnnualReturn = ref() // 年度中位數報酬率
 const worstAnnualReturn = ref() // 最差年度報酬率
 const bestAnnualReturn = ref() // 最佳年度報酬率
+const annualReturnLog = ref([]) // 年度報酬率紀錄
 const rotationsNumber = ref() // 輪動次數
 const fileName = ref('') // 檔案名稱
+const monteCarloTest = ref(false) // 蒙地卡羅模擬測試
+const outputChart = ref(true) // 是否輸出圖表
 
 const reset = () => {
   myChartDom.value = null
@@ -242,196 +252,36 @@ const handleFile = async (event) => {
         // sell: item // 若你仍要保留完整原始資料
       }
     })
-    buildChart()
-    buildChart2()
-    buildChart3()
-    buildChart4()
-    buildChart6()
-    buildChart7()
 
+     // 資金總報酬率
+    const { finalReturn, maxDrawdown, history, mean, median, worst, best, annualReturnsLog } = calculateSimulationResult(tableData.value, 10000, stocksPerRound.value)
+    totalReturn.value = finalReturn // 總報酬率
+    maxDrawdownValue.value = maxDrawdown // 區間最大回徹
+    rotationsNumber.value = history.length // 輪動次數
+    annualReturn.value = mean // 年度平均報酬率
+    medianAnnualReturn.value = median // 年度中位數報酬率
+    worstAnnualReturn.value = worst // 最差年度報酬率
+    bestAnnualReturn.value = best // 最佳年度報酬率
+    annualReturnLog.value = annualReturnsLog // 年度報酬率紀錄
 
-    // 資金總報酬率
-    // simulateMax5Positions(10000, 1)
-    simulateMax5Positions(10000, stocksPerRound.value)
-
-    // simulateMax5Positions(10000, 10)
+    // 輸出圖表
+    if (outputChart.value) {
+      buildChart1() // 報酬率分佈圖
+      buildChart2() // 每月交易次數分布
+      buildChart3() // 交易日期報酬分布
+      buildChart4() // 每年報酬
+      buildChart6() // 交易月報酬分布
+      buildChart7() // 交易月最高最低期報酬分布
+      buildChart0(history) // 資金 / 持倉成本 / 資產走勢圖
+    }
+    // 蒙地卡羅模擬測試
+    if (monteCarloTest.value) {
+      runMonteCarlo(tableData.value, 100, 10000, stocksPerRound.value)
+    }
   }
 }
 
-const simulateMax5Positions = (initialCapital = 10000, length) => {
-  const getDate = (str) => new Date(str.replaceAll('/', '-'))
-
-  let capital = initialCapital
-  let positions = [] // { stock, buyDate, sellDate, capitalUsed }
-  const history = []
-
-  // 照 buyDay 排序
-  const sorted = tableData.value
-    .filter(i =>
-      i.buyDay && i.sellDay &&
-      !isNaN(parseFloat(i.return))
-    )
-    .sort((a, b) => getDate(a.buyDay) - getDate(b.buyDay))
-
-  sorted.forEach(stock => {
-    const buyDate = getDate(stock.buyDay)
-    const sellDate = getDate(stock.sellDay)
-
-    // ✅ 先檢查目前持有的部位，有沒有該出場的
-    for (let i = positions.length - 1; i >= 0; i--) {
-      if (buyDate >= positions[i].sellDate) {
-        const pos = positions[i]
-        const r = parseFloat(pos.stock.return)
-        const profit = !isNaN(r)
-          ? pos.capitalUsed * (1 + r)
-          : pos.capitalUsed
-        capital += profit
-        positions.splice(i, 1)
-      }
-    }
-
-    // ✅ 若持倉未滿 length 檔，就進場
-    if (positions.length < length) {
-      const vacant = length - positions.length
-      const capitalPerStock = capital / vacant
-      if (capitalPerStock <= 0) return
-
-      capital -= capitalPerStock
-
-      positions.push({
-        stock,
-        buyDate,
-        sellDate,
-        capitalUsed: capitalPerStock
-      })
-
-      const positionCost = positions.reduce((sum, p) => sum + p.capitalUsed, 0)
-      const netAsset = capital + positionCost
-
-      history.push({
-        capitalPerStock: capitalPerStock,
-        buyDay: stock.buyDay,
-        sellDay: stock.sellDay,
-        name: stock.name,
-        return: (parseFloat(stock.return) * 100).toFixed(2) + '%',
-        capital: capital.toFixed(2), // 現金
-        positionCount: positions.length, // 持倉比數
-        netAsset: netAsset, // 總資產
-        returnRate: ((netAsset / initialCapital - 1) * 100).toFixed(2) // 總報酬率
-      })
-    }
-  })
-
-  // ✅ 最後：把剩下部位也出場
-  positions.forEach(pos => {
-    const r = parseFloat(pos.stock.return)
-    const profit = !isNaN(r)
-      ? pos.capitalUsed * (1 + r)
-      : pos.capitalUsed
-    capital += profit
-  })
-
-  const finalReturn = ((capital / initialCapital - 1) * 100).toFixed(2)
-
-  // ✅ 計算最大回撤
-  let maxAsset = parseFloat(history[0]?.netAsset || 0)
-  let maxDrawdown = 0
-  let sdate = ''
-  let edate = ''
-  const sdateArr = []
-  const edateArr = []
-
-  history.forEach(h => {
-    const net = parseFloat(h.netAsset)
-    if (net > maxAsset) {
-      maxAsset = net
-      edate = h.buyDay
-      edateArr.push(edate)
-    }
-    const dd = (maxAsset - net) / maxAsset
-    if (dd > maxDrawdown) {
-      maxDrawdown = dd
-      sdate = h.sellDay
-      sdateArr.push(sdate)
-    }
-  })
-
-  // 年化報酬率統計
-  const annualReturnMap = {}
-
-  history.forEach(h => {
-    const year = new Date(h.buyDay).getFullYear()
-    if (!annualReturnMap[year]) annualReturnMap[year] = []
-    annualReturnMap[year].push(h)
-  })
-
-  const annualReturns = []
-  const annualReturnsLog = []
-
-  for (const year in annualReturnMap) {
-    const records = annualReturnMap[year]
-
-    // 按日期排序確保第一筆、最後一筆
-    records.sort((a, b) => new Date(a.buyDay) - new Date(b.buyDay))
-
-    const start = records[0].netAsset
-    const end = records[records.length - 1].netAsset
-
-    if (!start || !end || start <= 0) continue
-
-    const r = (end / start - 1) * 100
-    annualReturns.push(r)
-    annualReturnsLog.push({
-      year: year,
-      start: start,
-      end: end,
-      return: r
-    })
-  }
-
-  // 統計
-  const mean = annualReturns.reduce((a, b) => a + b, 0) / annualReturns.length
-  const sorted2 = [...annualReturns].sort((a, b) => a - b)
-  const mid = Math.floor(sorted2.length / 2)
-  const median = sorted2.length % 2 === 0
-    ? (sorted2[mid - 1] + sorted2[mid]) / 2
-    : sorted2[mid]
-
-  const worst = sorted2[0]
-  const best = sorted2[sorted2 .length - 1]
-
-
-  console.log(`📊 模擬結果：最多同時持有 ${length} 檔（等權重）`)
-  console.log('✅ 初始資金：$', initialCapital)
-  console.log('✅ 最終資金：$', capital.toFixed(2))
-  console.log('✅ 總報酬率：', finalReturn + '%')
-  console.log('✅ 最大回撤:', (maxDrawdown * 100).toFixed(2) + '%')
-  console.log('✅ 年度平均報酬率:', mean.toFixed(2) + '%')
-  console.log('✅ 年度中位數報酬率:', median.toFixed(2) + '%')
-  console.log('✅ 最差年度報酬率:', worst.toFixed(2) + '%')
-  console.log('✅ 最佳年度報酬率:', best.toFixed(2) + '%')
-  console.log('年度報酬', annualReturnsLog);
-
-  console.log('輪動次數', history.length);
-
-
-  console.log(history)
-  console.log('sdate', sdate);
-  console.log('edate', edate);
-  console.log('sdateArr', sdateArr);
-  console.log('edateArr', edateArr);
-
-
-  totalReturn.value = finalReturn // 總報酬率
-  maxDrawdownValue.value = (maxDrawdown * 100).toFixed(2) // 區間最大回徹
-  rotationsNumber.value = history.length // 輪動次數
-  annualReturn.value = mean // 年度平均報酬率
-  medianAnnualReturn.value = median // 年度中位數報酬率
-  worstAnnualReturn.value = worst // 最差年度報酬率
-  bestAnnualReturn.value = best // 最佳年度報酬率
-
-
-
+const buildChart0 = (history) => {
 
   // 輸出圖表
   // 計算 netAsset（市值 = 現金 + 成本，這裡不含未實現盈虧，純成本）
@@ -479,10 +329,8 @@ const simulateMax5Positions = (initialCapital = 10000, length) => {
   })
 }
 
-
-
 // 報酬率分佈圖
-const buildChart = () => {
+const buildChart1 = () => {
   const returns = tableData.value.map(i => parseFloat(i.return)).filter(r => !isNaN(r)).map(r => r * 100)
   const binWidth = 5
   const min = Math.floor(Math.min(...returns) / binWidth) * binWidth
@@ -851,7 +699,7 @@ const buildChart7 = () => {
     ]
   })
 }
-120
+
 // 統計每年滾動報酬
 const buildChart4 = () => {
   const yearlyStats = {}
@@ -923,7 +771,6 @@ const buildChart4 = () => {
     ]
   })
 }
-
 onMounted(() => {
   // buildECharts()
 })
