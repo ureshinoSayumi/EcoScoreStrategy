@@ -227,7 +227,7 @@ export const calculateSimulationResult = (data, initialCapital = 10000, maxPosit
     median, // 年度中位數報酬率
     worst, // 最差年度報酬率
     best, // 最佳年度報酬率
-    annualReturnLog: annualReturnsLog, // 年度報酬率紀錄
+    annualReturnsLog: annualReturnsLog, // 年度報酬率紀錄
     history, // 歷史資料
   }
 }

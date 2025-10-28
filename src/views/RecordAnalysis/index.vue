@@ -3,9 +3,9 @@
     <el-main>
       <el-row :gutter="20">
         <el-col>
-          <input type="file" accept=".csv" @change="handleFile" />
+          <input type="file" accept=".csv" multiple @change="handleFile" />
           <el-form-item label="檔案名稱">
-             <el-text>{{ fileName }}</el-text>
+             <el-text>{{ fileNames.join(',') }}</el-text>
            </el-form-item>
            <el-form-item label="執行輪數">
              <el-input-number v-model="rounds" :min="0" size="small" />
@@ -22,7 +22,13 @@
            <el-form-item label="蒙地卡羅模擬">
              <el-switch v-model="monteCarloTest" />
            </el-form-item>
-          <el-button type="primary" @click="reset()"> 重置 </el-button>
+           <el-form-item label="多策略比較">
+             <el-switch v-model="multiStrategyTest" />
+           </el-form-item>
+          <el-button type="primary" :disabled="multiStrategyTest" @click="dataAnalysisSingle(tableData)"> 單策略分析 </el-button>
+          <el-button type="primary" :disabled="!multiStrategyTest"  @click="dataAnalysisMulti()"> 多策略分析 </el-button>
+          <el-button type="primary" :disabled="!multiStrategyTest"  @click="dataAnalysisMulti2()"> 多策略分析2 </el-button>
+          <el-button type="primary" :disabled="!multiStrategyTest"  @click="dataAnalysisMultiSummary()"> 多策略綜合計算 </el-button>
         </el-col>
       </el-row>
       <el-row :gutter="20">
@@ -30,7 +36,7 @@
           <el-card shadow="hover" style="max-width: 480px">
             <el-space direction="vertical" alignment="flex-start">
               <el-text>平均報酬: {{ averageReturn }}％</el-text>
-              <el-text>交易筆數: {{ tableData.length }}</el-text>
+              <el-text>交易筆數: {{ multiStrategyTest ? tableDataMulti.length : tableData.length }}</el-text>
               <el-text>平均賺賠比: {{ profitLossRatio }}</el-text>
               <el-text>報酬率中位數: {{ medianReturn }}</el-text>
               <el-text>勝率: {{ winRate }}</el-text>
@@ -132,14 +138,15 @@
 import { parseCSV } from '@/utils/csvReader';
 import { businessSignals } from '@/utils/data/businessSignals.js'; // 景氣指標
 import * as echarts from 'echarts';
-import { computed, onMounted, reactive, ref } from 'vue';
+import { onMounted, reactive, ref } from 'vue';
 import { calculateSimulationResult, runMonteCarlo } from './utils/monteCarloMethod';
 
 // 輸出報表
 const total = reactive({
   averageCompensation: 0
 })
-const tableData = ref([])
+const tableData = ref([]) // 交易資料
+const tableDataMulti = ref([]) // 多策略交易資料
 const chart = ref()
 const myChartDom = ref() // 報酬率分佈圖
 const myChartDom2 = ref() // 每月交易次數分布
@@ -159,9 +166,15 @@ const worstAnnualReturn = ref() // 最差年度報酬率
 const bestAnnualReturn = ref() // 最佳年度報酬率
 const annualReturnLog = ref([]) // 年度報酬率紀錄
 const rotationsNumber = ref() // 輪動次數
-const fileName = ref('') // 檔案名稱
+const fileNames = ref([]) // 檔案名稱
 const monteCarloTest = ref(false) // 蒙地卡羅模擬測試
 const outputChart = ref(true) // 是否輸出圖表
+const multiStrategyTest = ref(false) // 多策略比較
+
+const averageReturn = ref(0) // 平均報酬率
+const profitLossRatio = ref(0) // 平均賺賠比
+const medianReturn = ref(0) // 報酬率中位數
+const winRate = ref(0) // 勝率
 
 const reset = () => {
   myChartDom.value = null
@@ -170,19 +183,19 @@ const reset = () => {
 }
 
 // 平均報酬
-const averageReturn = computed(() => {
-  if (tableData.value.length === 0) return 0
+const averageReturnComputed = ((data) => {
+  if (data.length === 0) return 0
 
-  const total = tableData.value.reduce((sum, item) => {
+  const total = data.reduce((sum, item) => {
     const r = parseFloat(item.return)
     return isNaN(r) ? sum : sum + r
   }, 0)
 
-  return (total / tableData.value.length) * 100 // 乘 100 為百分比
+  return (total / data.length) * 100 // 乘 100 為百分比
 })
 // 平均賺賠比
-const profitLossRatio = computed(() => {
-  const returns = tableData.value
+const profitLossRatioComputed = ((data) => {
+  const returns = data
     .map(i => parseFloat(i.return))
     .filter(r => !isNaN(r))
 
@@ -197,8 +210,8 @@ const profitLossRatio = computed(() => {
   return avgProfit / Math.abs(avgLoss)
 })
 // 報酬率中位數
-const medianReturn = computed(() => {
-  const returns = tableData.value
+const medianReturnComputed = ((data) => {
+  const returns = data
     .map(item => parseFloat(item.return))
     .filter(r => !isNaN(r)) // 過濾無效數值
     .sort((a, b) => a - b)  // 由小到大排序
@@ -217,8 +230,8 @@ const medianReturn = computed(() => {
   }
 })
 // 勝率
-const winRate = computed(() => {
-  const returns = tableData.value
+const winRateComputed = ((data) => {
+  const returns = data
     .map(i => parseFloat(i.return))
     .filter(r => !isNaN(r))
 
@@ -230,13 +243,13 @@ const winRate = computed(() => {
 
 const handleFile = async (event) => {
   const file = event.target.files?.[0];
-  fileName.value = file.name
-  if (file) {
-    document.title = file.name; // 修改網頁標籤的標題
-    const data = await parseCSV(file);
-    console.log('CSV資料:', data);
-    tableData.value = data.map(item => {
-      return {
+  if (!file) {
+    return
+  }
+  const data = await parseCSV(file);
+  console.log('CSV資料:', data);
+  const formatterData = data.map(item => {
+    return {
         name: item["商品名稱"],
         code: item["商品代碼"],
         index: item["序號"],
@@ -251,10 +264,25 @@ const handleFile = async (event) => {
         note: item["訊息"],
         // sell: item // 若你仍要保留完整原始資料
       }
-    })
+  })
 
-     // 資金總報酬率
-    const { finalReturn, maxDrawdown, history, mean, median, worst, best, annualReturnsLog } = calculateSimulationResult(tableData.value, 10000, stocksPerRound.value)
+  if (multiStrategyTest.value) {
+    tableDataMulti.value.push(formatterData)
+    fileNames.value.push(file.name)
+
+  } else {
+    fileNames.value.push(file.name)
+    document.title = file.name; // 修改網頁標籤的標題
+    tableData.value =  formatterData
+
+  }
+  console.log('tableDataMulti', tableDataMulti.value)
+}
+
+// 單策略分析
+const dataAnalysisSingle = (data) => {
+    // 資金總報酬率
+    const { finalReturn, maxDrawdown, history, mean, median, worst, best, annualReturnsLog } = calculateSimulationResult(data, 10000, stocksPerRound.value)
     totalReturn.value = finalReturn // 總報酬率
     maxDrawdownValue.value = maxDrawdown // 區間最大回徹
     rotationsNumber.value = history.length // 輪動次數
@@ -264,21 +292,384 @@ const handleFile = async (event) => {
     bestAnnualReturn.value = best // 最佳年度報酬率
     annualReturnLog.value = annualReturnsLog // 年度報酬率紀錄
 
+    averageReturn.value = averageReturnComputed(data) // 平均報酬率
+    profitLossRatio.value = profitLossRatioComputed(data) // 平均賺賠比
+    medianReturn.value = medianReturnComputed(data) // 報酬率中位數
+    winRate.value = winRateComputed(data) // 勝率
+
     // 輸出圖表
     if (outputChart.value) {
-      buildChart1() // 報酬率分佈圖
-      buildChart2() // 每月交易次數分布
-      buildChart3() // 交易日期報酬分布
-      buildChart4() // 每年報酬
-      buildChart6() // 交易月報酬分布
-      buildChart7() // 交易月最高最低期報酬分布
+      buildChart1(data) // 報酬率分佈圖
+      buildChart2(data) // 每月交易次數分布
+      buildChart3(data) // 交易日期報酬分布
+      buildChart4(data) // 每年報酬
+      buildChart6(data) // 交易月報酬分布
+      buildChart7(data) // 交易月最高最低期報酬分布
       buildChart0(history) // 資金 / 持倉成本 / 資產走勢圖
     }
     // 蒙地卡羅模擬測試
     if (monteCarloTest.value) {
       runMonteCarlo(tableData.value, 100, 10000, stocksPerRound.value)
     }
+}
+
+// 多策略綜合計算
+const dataAnalysisMultiSummary = () => {
+  const data = []
+  tableDataMulti.value.forEach(item => {
+    item.forEach(item2 => {
+      data.push(item2)
+    })
+  })
+  console.log('data', data)
+  dataAnalysisSingle(data)
+  if (monteCarloTest.value) {
+    runMonteCarlo(data, 100, 10000, stocksPerRound.value)
   }
+
+}
+
+// 多策略分析 分析全部重疊
+const dataAnalysisMulti = () => {
+
+  // console.log(findFullOverlaps([arr, arr2, arr3], ['策略A','策略B','策略C'])); // []
+
+  const result = findFullOverlaps(tableDataMulti.value, fileNames.value)
+  dataAnalysisSingle(result)
+
+  console.log('result', result)
+
+  function toDate(s) {
+    return new Date(s.replace(/-/g, '/'));
+  }
+  function fmt(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const da = String(d.getDate()).padStart(2, '0');
+    return `${y}/${m}/${da}`;
+  }
+
+  function mergeIntervals(intervals) {
+    if (intervals.length === 0) return [];
+    const sorted = intervals
+      .map(iv => ({ start: toDate(iv.buyDay), end: toDate(iv.sellDay) }))
+      .sort((a, b) => a.start - b.start || a.end - b.end);
+    const merged = [sorted[0]];
+    for (let i = 1; i < sorted.length; i++) {
+      const last = merged[merged.length - 1];
+      const cur = sorted[i];
+      if (cur.start <= last.end) {
+        last.end = new Date(Math.max(+last.end, +cur.end));
+      } else {
+        merged.push(cur);
+      }
+    }
+    return merged;
+  }
+
+  function intersectIntervalLists(a, b) {
+    const res = [];
+    let i = 0, j = 0;
+    while (i < a.length && j < b.length) {
+      const s = new Date(Math.max(+a[i].start, +b[j].start));
+      const e = new Date(Math.min(+a[i].end, +b[j].end));
+      if (s <= e) res.push({ start: s, end: e });
+      if (a[i].end < b[j].end) i++; else j++;
+    }
+    return res;
+  }
+
+  function findFullOverlaps(strategyLists, strategyNames) {
+    const N = strategyLists.length;
+    if (!strategyNames || strategyNames.length !== N) {
+      strategyNames = Array.from({ length: N }, (_, i) => `strategy_${i + 1}`);
+    }
+
+    const perStrategyMap = strategyLists.map(list => {
+      const map = new Map();
+      for (const rec of list) {
+        if (!map.has(rec.name)) map.set(rec.name, []);
+        map.get(rec.name).push({ buyDay: rec.buyDay, sellDay: rec.sellDay, rec });
+      }
+      for (const [nm, intervals] of map) {
+        map.set(nm, mergeIntervals(intervals));
+      }
+      return map;
+    });
+
+    const namesInAll = (() => {
+      const sets = perStrategyMap.map(m => new Set(m.keys()));
+      const base = sets[0];
+      const res = [];
+      for (const nm of base) {
+        if (sets.every(s => s.has(nm))) res.push(nm);
+      }
+      return res;
+    })();
+
+    const result = [];
+    for (const nm of namesInAll) {
+      let inter = perStrategyMap[0].get(nm);
+      for (let k = 1; k < N && inter.length > 0; k++) {
+        inter = intersectIntervalLists(inter, perStrategyMap[k].get(nm));
+      }
+      for (const seg of inter) {
+        // 這裡用「第一個策略裡的原始物件」當基底，只是多一個 overlapStrategies 欄位
+        const sample = strategyLists[0].find(r => r.name === nm);
+        result.push({
+          ...sample,
+          buyDay: fmt(seg.start),
+          sellDay: fmt(seg.end),
+          overlapStrategies: [...strategyNames]
+        });
+      }
+    }
+
+    return result;
+  }
+
+}
+// 多策略分析2 分析只重疊兩個策略
+const dataAnalysisMulti2 = () => {
+  const result = findAnyPairOverlaps(tableDataMulti.value, fileNames.value)
+  console.log('result', result)
+  dataAnalysisSingle(result)
+  // 蒙地卡羅
+  if (monteCarloTest.value) {
+    runMonteCarlo(result, 100, 10000, stocksPerRound.value)
+  }
+  const { pairwiseCounts, overlapRatios } = analyzeOverlap(result);
+  console.log('pairwiseCounts', pairwiseCounts)
+  console.log('overlapRatios', overlapRatios)
+  function toDate(s) {
+    return new Date(s.replace(/-/g, '/'));
+  }
+  function fmt(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const da = String(d.getDate()).padStart(2, '0');
+    return `${y}/${m}/${da}`;
+  }
+
+  // 合併同策略內的重疊區間（僅用於時間運算，不動原始物件）
+  function mergeIntervals(intervals) {
+    if (intervals.length === 0) return [];
+    const sorted = intervals
+      .map(iv => ({ start: toDate(iv.buyDay), end: toDate(iv.sellDay) }))
+      .sort((a, b) => a.start - b.start || a.end - b.end);
+    const merged = [sorted[0]];
+    for (let i = 1; i < sorted.length; i++) {
+      const last = merged[merged.length - 1];
+      const cur = sorted[i];
+      if (cur.start <= last.end) {
+        last.end = new Date(Math.max(+last.end, +cur.end));
+      } else {
+        merged.push(cur);
+      }
+    }
+    return merged;
+  }
+
+  // 兩組(已合併)區間列表交集
+  function intersectIntervalLists(a, b) {
+    const res = [];
+    let i = 0, j = 0;
+    while (i < a.length && j < b.length) {
+      const s = new Date(Math.max(+a[i].start, +b[j].start));
+      const e = new Date(Math.min(+a[i].end, +b[j].end));
+      if (s <= e) res.push({ start: s, end: e });
+      if (a[i].end < b[j].end) i++; else j++;
+    }
+    return res;
+  }
+
+  // 檢查某策略的(已合併)區間列表是否與某段 seg 存在重疊
+  function hasOverlapWithSeg(intervals, seg) {
+    // 二分或線性皆可，這裡用線性簡潔
+    for (const iv of intervals) {
+      const s = new Date(Math.max(+iv.start, +seg.start));
+      const e = new Date(Math.min(+iv.end, +seg.end));
+      if (s <= e) return true;
+    }
+    return false;
+  }
+
+  // 取得某策略中某個 name 的任意原始物件，作為輸出基底
+  function pickSampleRecord(strategyList, name) {
+    return strategyList.find(r => r.name === name);
+  }
+
+  function findAnyPairOverlaps(strategyLists, strategyNames) {
+    const N = strategyLists.length;
+    if (!strategyNames || strategyNames.length !== N) {
+      strategyNames = Array.from({ length: N }, (_, i) => `strategy_${i + 1}`);
+    }
+
+    // 每策略：依 name 分組，並生成已合併的時間區間（僅時間，方便交集）
+    const perStrategyMap = strategyLists.map(list => {
+      const byName = new Map();
+      for (const rec of list) {
+        if (!byName.has(rec.name)) byName.set(rec.name, []);
+        byName.get(rec.name).push(rec);
+      }
+      const mergedByName = new Map();
+      for (const [nm, records] of byName) {
+        mergedByName.set(nm, mergeIntervals(records));
+      }
+      return { raw: list, mergedByName };
+    });
+
+    // 所有曾出現在至少一個策略的名稱集合
+    const allNames = new Set();
+    for (const { mergedByName } of perStrategyMap) {
+      for (const nm of mergedByName.keys()) allNames.add(nm);
+    }
+
+    const seen = new Set(); // 去重：key = name|buyDay|sellDay|sortedStrategies
+    const result = [];
+
+    for (const nm of allNames) {
+      // 找出具有此 name 的策略索引
+      const carriers = [];
+      for (let i = 0; i < N; i++) {
+        if (perStrategyMap[i].mergedByName.has(nm)) carriers.push(i);
+      }
+      if (carriers.length < 2) continue; // 至少要兩個策略含此 name
+
+      // 對所有 pair 做交集，得到 pair 的重疊區間
+      for (let a = 0; a < carriers.length; a++) {
+        for (let b = a + 1; b < carriers.length; b++) {
+          const i = carriers[a], j = carriers[b];
+          const interSegs = intersectIntervalLists(
+            perStrategyMap[i].mergedByName.get(nm),
+            perStrategyMap[j].mergedByName.get(nm)
+          );
+          if (interSegs.length === 0) continue;
+
+          for (const seg of interSegs) {
+            // 擴充：把與 seg 有重疊的其他策略也列入 overlapStrategies（但條件仍為「至少兩個」）
+            const overlappers = new Set([i, j]);
+            for (let k = 0; k < N; k++) {
+              if (k === i || k === j) continue;
+              const list = perStrategyMap[k].mergedByName.get(nm);
+              if (!list) continue;
+              if (hasOverlapWithSeg(list, seg)) overlappers.add(k);
+            }
+
+            // 產出一筆輸出。基底物件取 overlappers 中索引最小的那個策略的原始紀錄
+            const sortedIdx = [...overlappers].sort((x, y) => x - y);
+            const baseIdx = sortedIdx[0];
+            const baseRec = pickSampleRecord(strategyLists[baseIdx], nm);
+            if (!baseRec) continue; // 理論上不會
+
+            const out = {
+              ...baseRec, // 完整原欄位
+              buyDay: fmt(seg.start), // 改成重疊期間
+              sellDay: fmt(seg.end),
+              overlapStrategies: sortedIdx.map(idx => strategyNames[idx]),
+            };
+
+            const key = [
+              nm,
+              out.buyDay,
+              out.sellDay,
+              out.overlapStrategies.join(',')
+            ].join('|');
+
+            if (!seen.has(key)) {
+              seen.add(key);
+              result.push(out);
+            }
+          }
+        }
+      }
+    }
+    const getDate = (str) => new Date(str.replaceAll('/', '-'))
+    return result.sort((a, b) => getDate(a.buyDay) - getDate(b.buyDay));
+  }
+
+}
+
+const analyzeOverlap = (result) => {
+  function toDate(s) { return new Date(String(s).replace(/-/g, '/')); }
+  function dayDiffInclusive(a, b) {
+    return Math.floor((toDate(b) - toDate(a)) / 86400000) + 1;
+  }
+  function mergeIntervalsRaw(ivList) {
+    if (!ivList || ivList.length === 0) return [];
+    const arr = ivList
+      .map(({ buyDay, sellDay }) => ({ start: toDate(buyDay), end: toDate(sellDay) }))
+      .sort((x, y) => x.start - y.start || x.end - y.end);
+    const out = [arr[0]];
+    for (let i = 1; i < arr.length; i++) {
+      const last = out[out.length - 1];
+      const cur = arr[i];
+      if (cur.start <= last.end) {
+        if (cur.end > last.end) last.end = cur.end;
+      } else {
+        out.push(cur);
+      }
+    }
+    return out.map(iv => ({
+      buyDay: iv.start.toISOString().slice(0,10).replace(/-/g,'/'),
+      sellDay: iv.end.toISOString().slice(0,10).replace(/-/g,'/')
+    }));
+  }
+  function sumDays(intervals) {
+    let total = 0;
+    for (const iv of intervals) total += dayDiffInclusive(iv.buyDay, iv.sellDay);
+    return total;
+  }
+  function pairs(arr) {
+    const out = [];
+    for (let i = 0; i < arr.length; i++) {
+      for (let j = i + 1; j < arr.length; j++) out.push([arr[i], arr[j]]);
+    }
+    return out;
+  }
+
+  // 找出所有策略名稱
+  const strategySet = new Set();
+  for (const row of result) {
+    for (const s of (row.overlapStrategies || [])) strategySet.add(s);
+  }
+  const strategies = [...strategySet];
+
+  // 1) 策略兩兩重疊次數
+  const countMap = new Map();
+  for (const s of strategies) countMap.set(s, {});
+  for (const row of result) {
+    const set = Array.from(new Set(row.overlapStrategies || []));
+    for (const [a, b] of pairs(set)) {
+      countMap.get(a)[b] = (countMap.get(a)[b] || 0) + 1;
+      countMap.get(b)[a] = (countMap.get(b)[a] || 0) + 1;
+    }
+  }
+  const pairwiseCounts = strategies.map((name) => {
+    const m = countMap.get(name);
+    let best = { name: null, count: 0 };
+    for (const [other, c] of Object.entries(m)) {
+      if (c > best.count) best = { name: other, count: c };
+    }
+    return { name, '重疊': m, mostOverlapWith: best };
+  });
+
+  // 2) 每個策略的重疊天數
+  const overlappedSegmentsByStrategy = new Map();
+  for (const s of strategies) overlappedSegmentsByStrategy.set(s, []);
+  for (const row of result) {
+    const iv = { buyDay: row.buyDay, sellDay: row.sellDay };
+    for (const s of (row.overlapStrategies || [])) {
+      overlappedSegmentsByStrategy.get(s).push(iv);
+    }
+  }
+  const overlapRatios = strategies.map((name) => {
+    const mergedOverlap = mergeIntervalsRaw(overlappedSegmentsByStrategy.get(name));
+    const overlapDays = sumDays(mergedOverlap);
+    return { name, overlapDays };
+  });
+
+  return { pairwiseCounts, overlapRatios };
 }
 
 const buildChart0 = (history) => {
@@ -330,8 +721,8 @@ const buildChart0 = (history) => {
 }
 
 // 報酬率分佈圖
-const buildChart1 = () => {
-  const returns = tableData.value.map(i => parseFloat(i.return)).filter(r => !isNaN(r)).map(r => r * 100)
+const buildChart1 = (data) => {
+  const returns = data.map(i => parseFloat(i.return)).filter(r => !isNaN(r)).map(r => r * 100)
   const binWidth = 5
   const min = Math.floor(Math.min(...returns) / binWidth) * binWidth
   const max = Math.ceil(Math.max(...returns) / binWidth) * binWidth
@@ -360,10 +751,10 @@ const buildChart1 = () => {
   })
 }
 // 交易月分布
-const buildChart2 = () => {
+const buildChart2 = (data) => {
   const monthlyStats = {}
 
-  tableData.value.forEach(item => {
+  data.forEach(item => {
     const month = item.buyDay?.slice(0, 7).replace('/', '-') // 'YYYY-MM'
     const r = parseFloat(item.return)
     if (!month || isNaN(r)) return
@@ -452,7 +843,7 @@ const buildChart2 = () => {
   })
 }
 // 交易日分布
-const buildChart3 = () => {
+const buildChart3 = (data) => {
   const dayStats = {}
 
   // 初始化 1～31 號
@@ -461,7 +852,7 @@ const buildChart3 = () => {
   }
 
   // 分類進入各日期
-  tableData.value.forEach(item => {
+  data.forEach(item => {
     const day = Number(item.buyDay?.split('/')?.[2])
     const r = parseFloat(item.return)
     if (!isNaN(day) && day >= 1 && day <= 31 && !isNaN(r)) {
@@ -551,7 +942,7 @@ const buildChart3 = () => {
   })
 }
 // 依據每筆交易的 buyDay，統計各月份報酬
-const buildChart6 = () => {
+const buildChart6 = (data) => {
   const monthStats = {}
 
   // 初始化 1～12 月
@@ -560,7 +951,7 @@ const buildChart6 = () => {
   }
 
   // 將報酬值分類到對應的月份
-  tableData.value.forEach(item => {
+  data.forEach(item => {
     const monthStr = item.buyDay?.split('/')?.[1] // 取 MM 月份
     const month = Number(monthStr)
     const r = parseFloat(item.return)
@@ -632,7 +1023,7 @@ const buildChart6 = () => {
   })
 }
 // 統計每月最高與最低報酬
-const buildChart7 = () => {
+const buildChart7 = (data) => {
   const monthStats = {}
 
   // 初始化 1～12 月
@@ -641,7 +1032,7 @@ const buildChart7 = () => {
   }
 
   // 將報酬分類到對應月份
-  tableData.value.forEach(item => {
+  data.forEach(item => {
     const monthStr = item.buyDay?.split('/')?.[1] // MM 月
     const month = Number(monthStr)
     const r = parseFloat(item.return)
@@ -701,10 +1092,10 @@ const buildChart7 = () => {
 }
 
 // 統計每年滾動報酬
-const buildChart4 = () => {
+const buildChart4 = (data) => {
   const yearlyStats = {}
 
-  tableData.value.forEach(item => {
+  data.forEach(item => {
     const year = item.buyDay?.slice(0, 4)
     const r = parseFloat(item.return)
     if (!year || isNaN(r)) return
