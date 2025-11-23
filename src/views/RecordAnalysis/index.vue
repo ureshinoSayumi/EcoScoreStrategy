@@ -4,6 +4,10 @@
       <el-row :gutter="20">
         <el-col>
           <input type="file" accept=".csv" multiple @change="handleFile" />
+          <input type="file" accept=".csv" multiple @change="testSMA200" />
+          <el-form-item label="SMA">
+            <el-input-number v-model="SMA" :min="0" size="small" />
+          </el-form-item>
           <el-form-item label="檔案名稱">
              <el-text>{{ fileNames.join(',') }}</el-text>
            </el-form-item>
@@ -104,6 +108,12 @@
         <div ref="myChartDom8" style="width: 1500px; height: 600px"></div>
       </div>
 
+      <!-- 模擬資金報酬曲線 -->
+      <div style="width: 100%; overflow-x: scroll">
+        <div ref="myChartDom9" style="width: 1500px; height: 600px"></div>
+      </div>
+
+
       <!-- 表格 -->
       <el-table
         v-if="false"
@@ -182,7 +192,308 @@ const reset = () => {
   tableData.value = []
 }
 
-// 平均報酬
+
+
+/************************************************
+ * 主函式：同時計算 Buy&Hold + SMA 策略
+ ************************************************/
+ const backtest = (rawBars, initialCapital = 1000000, window = 200) =>  {
+  const bh = backtestBuyAndHold(rawBars, initialCapital);
+  const sma = backtestSMA(rawBars, window, initialCapital);
+
+  /************************************************
+   * 通用：績效統計
+   ************************************************/
+  function calcStats(equityCurve, rets) {
+    const startEquity = equityCurve[0].equity;
+    const endEquity = equityCurve[equityCurve.length - 1].equity;
+    const totalReturn = endEquity / startEquity - 1;
+
+    const tradingDays = equityCurve.length;
+    const years = tradingDays / 252;
+
+    const cagr = Math.pow(1 + totalReturn, 1 / years) - 1;
+
+    // 最大回撤
+    let maxEquity = equityCurve[0].equity;
+    let maxDrawdown = 0;
+    for (const pt of equityCurve) {
+      if (pt.equity > maxEquity) maxEquity = pt.equity;
+      const dd = pt.equity / maxEquity - 1;
+      if (dd < maxDrawdown) maxDrawdown = dd;
+    }
+
+    // 年化波動率
+    const valid = rets.slice(1);
+    const mean = valid.reduce((a, b) => a + b, 0) / valid.length;
+    const variance = valid.reduce((s, r) => s + (r - mean) ** 2, 0) / (valid.length - 1 || 1);
+    const dailyVol = Math.sqrt(variance);
+    const annualVol = dailyVol * Math.sqrt(252);
+
+    // 計算每一年的年化報酬率%數，格式為{ year: 2020, return: 10 }
+    function calcAnnualReturns(equityCurve) {
+      // equityCurve: [{date, equity}...]
+      const byYear = {};
+
+      for (const pt of equityCurve) {
+        const d = pt.date instanceof Date ? pt.date : new Date(pt.date);
+        const year = d.getFullYear();
+        if (!byYear[year]) {
+          byYear[year] = { startEquity: pt.equity, endEquity: pt.equity, first: d, last: d };
+        }
+        if (d < byYear[year].first) {
+          byYear[year].first = d;
+          byYear[year].startEquity = pt.equity;
+        }
+        if (d > byYear[year].last) {
+          byYear[year].last = d;
+          byYear[year].endEquity = pt.equity;
+        }
+      }
+
+      // 年化計算（按該年份的實際天數做）也可以只算單年單純報酬率
+      const annualReturns = [];
+      for (const yearStr of Object.keys(byYear).sort()) {
+        const year = Number(yearStr);
+        const y = byYear[year];
+        // 這裡假設每年完整，計算單純報酬率，不年化
+        const ret = y.endEquity / y.startEquity - 1;
+        annualReturns.push({ year, return: +(ret * 100).toFixed(2) });
+      }
+      return annualReturns;
+    }
+  
+
+    return {
+      startEquity,
+      endEquity,
+      totalReturnPercent: `${(totalReturn * 100).toFixed(2)}%`,
+      cagr,
+      maxDrawdown,
+      annualVol,
+      tradingDays,
+      annualReturns: calcAnnualReturns(equityCurve),
+    };
+  }
+
+
+  /************************************************
+   * 策略1：Buy & Hold（從頭買到尾）
+   ************************************************/
+  function backtestBuyAndHold(rawBars, initialCapital = 1_000_000) {
+    const bars = [...rawBars]
+      .map(r => ({
+        date: new Date(r.Date),
+        date2: r.Date,
+        close: Number(r.Close),
+      }))
+      .sort((a, b) => a.date - b.date);
+
+    let equity = initialCapital;
+    const equityCurve = [];
+    const rets = [];
+
+    for (let i = 0; i < bars.length; i++) {
+      const bar = bars[i];
+      const prev = i > 0 ? bars[i - 1] : null;
+
+      let ret = 0;
+      if (prev) ret = bar.close / prev.close - 1;
+
+      equity *= (1 + ret);
+
+      equityCurve.push({ date: bar.date, date2: bar.date2, equity });
+      rets.push(ret);
+    }
+
+    return {
+      equityCurve,
+      stats: calcStats(equityCurve, rets),
+    };
+  }
+
+
+  /************************************************
+   * 策略2：SMA window 站上就持有、跌破就空手
+   ************************************************/
+  function backtestSMA(rawBars, window = 200, initialCapital = 1000000) {
+    const bars = [...rawBars]
+      .map(r => ({
+        date: new Date(r.Date),
+        date2: r.Date,
+        close: Number(r.Close),
+      }))
+      .sort((a, b) => a.date - b.date);
+
+    const n = bars.length;
+    if (n < window + 1) {
+      console.log(`資料太短，需要至少 ${window + 1} 根`);
+      return;
+    }
+
+    // 計算 SMA
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      sum += bars[i].close;
+      if (i >= window) sum -= bars[i - window].close;
+      bars[i].sma = i >= window - 1 ? sum / window : null;
+    }
+
+    // 回測
+    let equity = initialCapital;
+    let position = 0; // 0: 空手 1: 持有
+    const equityCurve = [];
+    const rets = [];
+    let tradeCount = 0;
+
+    let aboveCount = 0; // 連續站上計數
+    let entryCount = 1; // 連續站上日
+
+    for (let i = 0; i < n; i++) {
+      const bar = bars[i];
+      const prev = i > 0 ? bars[i - 1] : null;
+
+      // 今日報酬（昨收 → 今收）
+      let ret = 0;
+      if (prev) ret = bar.close / prev.close - 1;
+
+      // 用昨天的 position 吃今天的報酬
+      equity *= (1 + ret * position);
+
+      equityCurve.push({
+        date: bar.date,
+        date2: bar.date2,
+        equity,
+        position,
+      });
+
+      rets.push(ret * position);
+
+      // 用今天收盤決定「明天」持倉
+      const sma = bar.sma;
+      let nextPos = position;
+
+      if (sma === null) {
+        aboveCount = 0;
+        nextPos = 0; // 一定空手
+      } else {
+        // 站上 -> 增加 aboveCount
+        if (bar.close > sma) {
+          aboveCount++;
+        } else {
+          aboveCount = 0;
+        }
+
+        if (position === 1) {
+          // 已持有，今日一旦跌破就馬上空手
+          if (bar.close < sma) {
+            nextPos = 0;
+          }
+        } else {
+          // 原本沒持股，現在連續站上 SMA X 天才進場
+          if (aboveCount >= entryCount) {
+            nextPos = 1;
+          }
+        }
+
+        // 補充：如果非滿足 entry，持續持有 aboveCount，但不進場
+        if (position === 0 && aboveCount < entryCount) {
+          nextPos = 0;
+        }
+      }
+
+      if (nextPos !== position) tradeCount++;
+
+      position = nextPos;
+    }
+
+    return {
+      equityCurve,
+      stats: calcStats(equityCurve, rets),
+      tradeCount,
+    };
+  }
+
+  return {
+    buyAndHold: bh.stats,
+    smaStrategy: sma.stats,
+    tradeCount: sma.tradeCount,
+    bhCurve: bh.equityCurve,
+    smaCurve: sma.equityCurve,
+  };
+}
+
+const SMA = ref(200)
+const myChartDom9 = ref() 
+
+const testSMA200 = async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) {
+    return
+  }
+  const data = await parseCSV(file);
+  console.log('CSV資料:', data);
+
+  const result = backtest(data, 1000000, SMA.value);
+
+
+  console.log("Buy & Hold :", result.buyAndHold);
+  console.log("SMA 策略：", result.smaStrategy);
+  console.log("交易次數：", result.tradeCount);
+  console.log("bhCurve", result.bhCurve);
+  console.log("smaCurve", result.smaCurve);
+
+  // 參考 buildChart0 輸出圖表
+  buildChart9(result.bhCurve, result.smaCurve);
+}
+
+const buildChart9 = (bhCurve, smaCurve) => {
+  // 輸出圖表
+  // 計算 netAsset（市值 = 現金 + 成本，這裡不含未實現盈虧，純成本）
+  const chart = echarts.init(myChartDom9.value)
+
+  chart.setOption({
+    title: { text: '資金 / 持倉成本 / 資產走勢圖' },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params) => {
+        const i = params[0].dataIndex
+        const d = bhCurve[i]
+        const s = smaCurve[i]
+        return `
+          日期：${d.date2}<br/>
+          單筆持有：$${d.equity}<br/>
+          200 SMA：$${s.equity}<br/>
+        `
+      }
+    },
+    legend: {
+      data: ['單筆持有', '200 SMA']
+    },
+    xAxis: {
+      type: 'category',
+      data: bhCurve.map(h => h.date2),
+      axisLabel: { rotate: 45 }
+    },
+    yAxis: {
+      type: 'value',
+      name: '金額（元）'
+    },
+    series: [
+      {
+        name: '單筆持有',
+        type: 'line',
+        data: bhCurve.map(h => parseFloat(h.equity))
+      },
+      {
+        name: '200 SMA',
+        type: 'line',
+        data: smaCurve.map(h => parseFloat(h.equity))
+      }
+    ]
+  })
+}
+
 const averageReturnComputed = ((data) => {
   if (data.length === 0) return 0
 
