@@ -9,19 +9,21 @@ const router = createRouter({
       name: 'home',
       component: HomeView,
     },
+    // 技術分析投資法 單筆買賣
     {
-      path: '/technicalAnalysis', // 技術分析投資法 單筆買賣
+      path: '/technicalAnalysis',
       name: 'technicalAnalysis',
       component: () => import('@/views/TechnicalAnalysis/index.vue'),
     },
+    // 取得股票資料
     {
-      path: '/fetchStock', // 取得股票資料
+      path: '/fetchStock',
       name: 'fetchStock',
       component: () => import('@/views/ApiGet/index.vue'),
     },
-    // 交易紀錄分析
+    // XQ 分析器
     {
-      path: '/recordAnalysis', // XQ 分析器
+      path: '/recordAnalysis',
       name: 'recordAnalysis',
       component: () => import('@/views/RecordAnalysis/index.vue'),
     },
@@ -34,9 +36,6 @@ const router = createRouter({
     {
       path: '/about',
       name: 'about',
-      // route level code-splitting
-      // this generates a separate chunk (About.[hash].js) for this route
-      // which is lazy-loaded when the route is visited.
       component: () => import('../views/AboutView.vue'),
     },
   ],
