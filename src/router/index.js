@@ -10,20 +10,26 @@ const router = createRouter({
       component: HomeView,
     },
     {
-      path: '/technicalAnalysis',
+      path: '/technicalAnalysis', // 技術分析投資法 單筆買賣
       name: 'technicalAnalysis',
       component: () => import('@/views/TechnicalAnalysis/index.vue'),
     },
     {
-      path: '/fetchStock',
+      path: '/fetchStock', // 取得股票資料
       name: 'fetchStock',
       component: () => import('@/views/ApiGet/index.vue'),
     },
     // 交易紀錄分析
     {
-      path: '/recordAnalysis',
+      path: '/recordAnalysis', // XQ 分析器
       name: 'recordAnalysis',
       component: () => import('@/views/RecordAnalysis/index.vue'),
+    },
+    // 2倍作多槓桿型ETF，單筆買入 VS SMA200 策略
+    {
+      path: '/2xETFvsSMA200',
+      name: '2xETFvsSMA200',
+      component: () => import('@/views/2xETFvsSMA200/index.vue'),
     },
     {
       path: '/about',

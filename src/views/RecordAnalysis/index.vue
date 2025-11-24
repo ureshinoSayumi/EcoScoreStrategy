@@ -4,10 +4,6 @@
       <el-row :gutter="20">
         <el-col>
           <input type="file" accept=".csv" multiple @change="handleFile" />
-          <input type="file" accept=".csv" multiple @change="testSMA200" />
-          <el-form-item label="SMA">
-            <el-input-number v-model="SMA" :min="0" size="small" />
-          </el-form-item>
           <el-form-item label="檔案名稱">
              <el-text>{{ fileNames.join(',') }}</el-text>
            </el-form-item>
@@ -107,12 +103,6 @@
       <div style="width: 100%; overflow-x: scroll">
         <div ref="myChartDom8" style="width: 1500px; height: 600px"></div>
       </div>
-
-      <!-- 模擬資金報酬曲線 -->
-      <div style="width: 100%; overflow-x: scroll">
-        <div ref="myChartDom9" style="width: 1500px; height: 600px"></div>
-      </div>
-
 
       <!-- 表格 -->
       <el-table
@@ -262,7 +252,7 @@ const reset = () => {
       }
       return annualReturns;
     }
-  
+
 
     return {
       startEquity,
@@ -422,78 +412,6 @@ const reset = () => {
     smaCurve: sma.equityCurve,
   };
 }
-
-const SMA = ref(200)
-const myChartDom9 = ref() 
-
-const testSMA200 = async (event) => {
-  const file = event.target.files?.[0];
-  if (!file) {
-    return
-  }
-  const data = await parseCSV(file);
-  console.log('CSV資料:', data);
-
-  const result = backtest(data, 1000000, SMA.value);
-
-
-  console.log("Buy & Hold :", result.buyAndHold);
-  console.log("SMA 策略：", result.smaStrategy);
-  console.log("交易次數：", result.tradeCount);
-  console.log("bhCurve", result.bhCurve);
-  console.log("smaCurve", result.smaCurve);
-
-  // 參考 buildChart0 輸出圖表
-  buildChart9(result.bhCurve, result.smaCurve);
-}
-
-const buildChart9 = (bhCurve, smaCurve) => {
-  // 輸出圖表
-  // 計算 netAsset（市值 = 現金 + 成本，這裡不含未實現盈虧，純成本）
-  const chart = echarts.init(myChartDom9.value)
-
-  chart.setOption({
-    title: { text: '資金 / 持倉成本 / 資產走勢圖' },
-    tooltip: {
-      trigger: 'axis',
-      formatter: (params) => {
-        const i = params[0].dataIndex
-        const d = bhCurve[i]
-        const s = smaCurve[i]
-        return `
-          日期：${d.date2}<br/>
-          單筆持有：$${d.equity}<br/>
-          200 SMA：$${s.equity}<br/>
-        `
-      }
-    },
-    legend: {
-      data: ['單筆持有', '200 SMA']
-    },
-    xAxis: {
-      type: 'category',
-      data: bhCurve.map(h => h.date2),
-      axisLabel: { rotate: 45 }
-    },
-    yAxis: {
-      type: 'value',
-      name: '金額（元）'
-    },
-    series: [
-      {
-        name: '單筆持有',
-        type: 'line',
-        data: bhCurve.map(h => parseFloat(h.equity))
-      },
-      {
-        name: '200 SMA',
-        type: 'line',
-        data: smaCurve.map(h => parseFloat(h.equity))
-      }
-    ]
-  })
-}
-
 const averageReturnComputed = ((data) => {
   if (data.length === 0) return 0
 
