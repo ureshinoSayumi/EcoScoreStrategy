@@ -8,7 +8,10 @@
             <el-input-number v-model="SMA" :min="0" size="small" />
           </el-form-item>
           <el-form-item label="連續站上日">
-            <el-input-number v-model="signalSensitive" :min="0" size="small" />
+            <el-input-number v-model="enterSensitive" :min="0" size="small" />
+          </el-form-item>
+          <el-form-item label="連續跌破日">
+            <el-input-number v-model="exitSensitive" :min="0" size="small" />
           </el-form-item>
           <el-form-item label="檔案名稱">
              <el-text>{{ fileNames.join(',') }}</el-text>
@@ -102,7 +105,8 @@ const myChartDom = ref()
 const tableData = ref([]) // 交易資料
 const fileNames = ref([]) // 檔案名稱
 
-const signalSensitive = ref(1) // 連續站上日
+const enterSensitive = ref(1) // 連續站上日
+const exitSensitive = ref(1) // 連續跌破日
 
 // SMA 策略統計
 const smaTotalReturn = ref('') // 總報酬率
@@ -126,9 +130,9 @@ const bhAnnualReturnLog = ref([]) // 年度報酬率紀錄
 /************************************************
  * 主函式：同時計算 Buy&Hold + SMA 策略
  ************************************************/
-const backtest = (rawBars, initialCapital = 1000000, window = 200, signalSensitive = 1) =>  {
+const backtest = (rawBars, initialCapital = 1000000, window = 200, enterSensitive = 1, exitSensitive = 1) =>  {
   const bh = backtestBuyAndHold(rawBars, initialCapital);
-  const sma = backtestSMA(rawBars, window, initialCapital, signalSensitive);
+  const sma = backtestSMA(rawBars, window, initialCapital, enterSensitive, exitSensitive);
 
   /************************************************
    * 通用：績效統計
@@ -245,7 +249,7 @@ const backtest = (rawBars, initialCapital = 1000000, window = 200, signalSensiti
   /************************************************
    * 策略2：SMA window 站上就持有、跌破就空手
    ************************************************/
-  function backtestSMA(rawBars, window = 200, initialCapital = 1000000, signalSensitive = 1) {
+  function backtestSMA(rawBars, window = 200, initialCapital = 1000000, enterSensitive = 1, exitSensitive = 1) {
     const bars = [...rawBars]
       .map(r => ({
         date: new Date(r.Date),
@@ -276,7 +280,9 @@ const backtest = (rawBars, initialCapital = 1000000, window = 200, signalSensiti
     let tradeCount = 0;
 
     let aboveCount = 0; // 連續站上計數
-    // signalSensitive = 1; // 連續站上日
+    let belowCount = 0; // 連續跌破計數
+    // enterSensitive = 1; // 連續站上日
+    // exitSensitive = 1; // 連續跌破日
 
     for (let i = 0; i < n; i++) {
       const bar = bars[i];
@@ -306,27 +312,33 @@ const backtest = (rawBars, initialCapital = 1000000, window = 200, signalSensiti
         aboveCount = 0;
         nextPos = 0; // 一定空手
       } else {
-        // 站上 -> 增加 aboveCount
+        // 更新連續站上 / 跌破計數
         if (bar.close > sma) {
           aboveCount++;
-        } else {
+          belowCount = 0;
+        } else if (bar.close < sma) {
+          belowCount++;
           aboveCount = 0;
+        } else {
+          // 嚴格相等時兩邊都歸零（你也可以改成站上不歸零，看你策略定義）
+          aboveCount = 0;
+          belowCount = 0;
         }
 
         if (position === 1) {
-          // 已持有，今日一旦跌破就馬上空手
-          if (bar.close < sma) {
+          // 已持有：連續跌破 exitSensitive 天才出場
+          if (belowCount >= exitSensitive) {
             nextPos = 0;
           }
         } else {
-          // 原本沒持股，現在連續站上 SMA X 天才進場
-          if (aboveCount >= signalSensitive) {
+          // 原本沒持股：連續站上 enterSensitive 天才進場
+          if (aboveCount >= enterSensitive) {
             nextPos = 1;
           }
         }
 
         // 補充：如果非滿足 entry，持續持有 aboveCount，但不進場
-        if (position === 0 && aboveCount < signalSensitive) {
+        if (position === 0 && aboveCount < enterSensitive) {
           nextPos = 0;
         }
       }
@@ -361,7 +373,7 @@ const testSMA200 = async (event) => {
   const data = await parseCSV(file);
   console.log('CSV資料:', data);
 
-  const result = backtest(data, 1000000, SMA.value, signalSensitive.value);
+  const result = backtest(data, 1000000, SMA.value, enterSensitive.value, exitSensitive.value);
 
 
   console.log("Buy & Hold :", result.buyAndHold);
