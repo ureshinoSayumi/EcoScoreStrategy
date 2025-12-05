@@ -64,7 +64,7 @@ export const shuffleReturns = (data) => {
   }))
 }
 
-export const calculateSimulationResult = (data, initialCapital = 10000, maxPositions = 10) => {
+export const calculateSimulationResult = (data, initialCapital = 10000, maxPositions = 10, isRepeat = true) => {
   const getDate = (str) => new Date(str.replaceAll('/', '-'))
 
   let capital = initialCapital
@@ -102,30 +102,62 @@ export const calculateSimulationResult = (data, initialCapital = 10000, maxPosit
       const capitalPerStock = capital / vacant
       if (capitalPerStock <= 0) return
 
-      capital -= capitalPerStock
+      // 不要進場跟positionsname重複的
+      console.log('positions', positions);
+      console.log('stock', stock);
 
-      positions.push({
-        stock,
-        buyDate,
-        sellDate,
-        capitalUsed: capitalPerStock
-      })
+      // 是否允許重複進場
+      if (isRepeat) {
+        capital -= capitalPerStock
+        positions.push({
+          stock,
+          buyDate,
+          sellDate,
+          capitalUsed: capitalPerStock
+        })
+        const positionCost = positions.reduce((sum, p) => sum + p.capitalUsed, 0)
+        const netAsset = capital + positionCost
 
-      const positionCost = positions.reduce((sum, p) => sum + p.capitalUsed, 0)
-      const netAsset = capital + positionCost
+        history.push({
+          buyDay: stock.buyDay,
+          sellDay: stock.sellDay,
+          name: stock.name,
+          // return: (parseFloat(stock.return) * 100).toFixed(2) + '%',
+          return: parseFloat(stock.return),
+          capital: capital,
+          positionCount: positions.length,
+          netAsset,
+          // returnRate: ((netAsset / initialCapital - 1) * 100).toFixed(2) // 總報酬率
+          returnRate: (netAsset / initialCapital - 1) * 100 // 總報酬率
+        })
+      } else {
+        if (!positions.some(p => p.stock.name === stock.name)) {
+          capital -= capitalPerStock
+          positions.push({
+            stock,
+            buyDate,
+            sellDate,
+            capitalUsed: capitalPerStock
+          })
+          const positionCost = positions.reduce((sum, p) => sum + p.capitalUsed, 0)
+          const netAsset = capital + positionCost
 
-      history.push({
-        buyDay: stock.buyDay,
-        sellDay: stock.sellDay,
-        name: stock.name,
-        // return: (parseFloat(stock.return) * 100).toFixed(2) + '%',
-        return: parseFloat(stock.return),
-        capital: capital,
-        positionCount: positions.length,
-        netAsset,
-        // returnRate: ((netAsset / initialCapital - 1) * 100).toFixed(2) // 總報酬率
-        returnRate: (netAsset / initialCapital - 1) * 100 // 總報酬率
-      })
+          history.push({
+            buyDay: stock.buyDay,
+            sellDay: stock.sellDay,
+            name: stock.name,
+            // return: (parseFloat(stock.return) * 100).toFixed(2) + '%',
+            return: parseFloat(stock.return),
+            capital: capital,
+            positionCount: positions.length,
+            netAsset,
+            // returnRate: ((netAsset / initialCapital - 1) * 100).toFixed(2) // 總報酬率
+            returnRate: (netAsset / initialCapital - 1) * 100 // 總報酬率
+          })
+        }
+      }
+
+
     }
   })
 
@@ -212,7 +244,7 @@ export const calculateSimulationResult = (data, initialCapital = 10000, maxPosit
   // console.log('輪動次數', history.length);
 
 
-  // console.log(history)
+  console.log(history)
   // console.log('sdate', sdate);
   // console.log('edate', edate);
   // console.log('sdateArr', sdateArr);

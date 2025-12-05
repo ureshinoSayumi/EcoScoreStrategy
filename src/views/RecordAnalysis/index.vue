@@ -7,8 +7,8 @@
           <el-form-item label="檔案名稱">
              <el-text>{{ fileNames.join(',') }}</el-text>
            </el-form-item>
-           <el-form-item label="執行輪數">
-             <el-input-number v-model="rounds" :min="0" size="small" />
+           <el-form-item label="是否重複進場">
+             <el-switch v-model="isRepeat" />
            </el-form-item>
            <el-form-item label="持有限制">
              <el-input-number v-model="stocksPerRound" :min="0" size="small" />
@@ -155,7 +155,7 @@ const myChartDom4 = ref() // 每年報酬
 const myChartDom6 = ref() // 第四張圖表容器
 const myChartDom7 = ref() // 第四張圖表容器
 const myChartDom8 = ref() // 第四張圖表容器
-const rounds = ref(40) // 執行輪數
+const isRepeat = ref(true) // 是否重複進場
 const stocksPerRound = ref(10) // 持有限制
 const holdDays = ref(60) // 持有天數
 const totalReturn = ref('') // 總報酬率
@@ -511,7 +511,7 @@ const handleFile = async (event) => {
 // 單策略分析
 const dataAnalysisSingle = (data) => {
     // 資金總報酬率
-    const { finalReturn, maxDrawdown, history, mean, median, worst, best, annualReturnsLog } = calculateSimulationResult(data, 10000, stocksPerRound.value)
+    const { finalReturn, maxDrawdown, history, mean, median, worst, best, annualReturnsLog } = calculateSimulationResult(data, 10000, stocksPerRound.value, isRepeat.value)
     totalReturn.value = finalReturn // 總報酬率
     maxDrawdownValue.value = maxDrawdown // 區間最大回徹
     rotationsNumber.value = history.length // 輪動次數
