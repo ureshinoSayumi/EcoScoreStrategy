@@ -35,6 +35,7 @@
         <el-col :span="6">
           <el-card shadow="hover" style="max-width: 480px">
             <el-space direction="vertical" alignment="flex-start">
+              <el-text>回測方式: {{ backtestType }}</el-text>
               <el-text>平均報酬: {{ averageReturn }}％</el-text>
               <el-text>交易筆數: {{ multiStrategyTest ? tableDataMulti.length : tableData.length }}</el-text>
               <el-text>平均賺賠比: {{ profitLossRatio }}</el-text>
@@ -175,6 +176,7 @@ const averageReturn = ref(0) // 平均報酬率
 const profitLossRatio = ref(0) // 平均賺賠比
 const medianReturn = ref(0) // 報酬率中位數
 const winRate = ref(0) // 勝率
+const backtestType = ref('') // 回測方式
 
 const reset = () => {
   myChartDom.value = null
@@ -544,6 +546,7 @@ const dataAnalysisSingle = (data) => {
 
 // 多策略綜合計算
 const dataAnalysisMultiSummary = () => {
+  backtestType.value = '多策略綜合計算'
   const data = []
   tableDataMulti.value.forEach(item => {
     item.forEach(item2 => {
@@ -560,7 +563,7 @@ const dataAnalysisMultiSummary = () => {
 
 // 多策略分析 分析全部重疊
 const dataAnalysisMulti = () => {
-
+  backtestType.value = '多策略分析'
   // console.log(findFullOverlaps([arr, arr2, arr3], ['策略A','策略B','策略C'])); // []
 
   const result = findFullOverlaps(tableDataMulti.value, fileNames.value)
@@ -660,6 +663,7 @@ const dataAnalysisMulti = () => {
 }
 // 多策略分析2 分析只重疊兩個策略
 const dataAnalysisMulti2 = () => {
+  backtestType.value = '多策略分析2'
   const result = findAnyPairOverlaps(tableDataMulti.value, fileNames.value)
   console.log('result', result)
   dataAnalysisSingle(result)
