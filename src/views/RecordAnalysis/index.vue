@@ -3,12 +3,9 @@
     <el-main>
       <el-row :gutter="20">
         <el-col>
-          <input type="file" accept=".csv" multiple @change="handleFile" />
+          <input  type="file" accept=".csv" multiple @change="handleFile" />
           <el-form-item label="檔案名稱">
              <el-text>{{ fileNames.join(',') }}</el-text>
-           </el-form-item>
-           <el-form-item label="是否重複進場">
-             <el-switch v-model="isRepeat" />
            </el-form-item>
            <el-form-item label="持有限制">
              <el-input-number v-model="stocksPerRound" :min="0" size="small" />
@@ -35,25 +32,51 @@
         <el-col :span="6">
           <el-card shadow="hover" style="max-width: 480px">
             <el-space direction="vertical" alignment="flex-start">
-              <el-text>回測方式: {{ backtestType }}</el-text>
-              <el-text>平均報酬: {{ averageReturn }}％</el-text>
+              <el-text>回測方式: {{ returnCard.backtestType }}、重複進場</el-text>
+              <el-text>平均報酬: {{ returnCard.averageReturn }}％</el-text>
               <el-text>交易筆數: {{ multiStrategyTest ? tableDataMulti.length : tableData.length }}</el-text>
-              <el-text>平均賺賠比: {{ profitLossRatio }}</el-text>
-              <el-text>報酬率中位數: {{ medianReturn }}</el-text>
-              <el-text>勝率: {{ winRate }}</el-text>
+              <el-text>平均賺賠比: {{ returnCard.profitLossRatio }}</el-text>
+              <el-text>報酬率中位數: {{ returnCard.medianReturn }}</el-text>
+              <el-text>勝率: {{ returnCard.winRate }}</el-text>
 
 
             </el-space>
             <template #footer>
               <el-space direction="vertical" alignment="flex-start">
-                <el-text>總報酬: {{ totalReturn }}</el-text>
-                <el-text>區間最大回徹: {{ maxDrawdownValue }}％</el-text>
-                <el-text>年度平均報酬率: {{ annualReturn }}％</el-text>
-                <el-text>年度中位數報酬率: {{ medianAnnualReturn }}％</el-text>
-                <el-text>最差年度報酬率: {{ worstAnnualReturn }}％</el-text>
-                <el-text>最佳年度報酬率: {{ bestAnnualReturn }}％</el-text>
-                <el-text>輪動次數: {{ rotationsNumber }}</el-text>
-                <el-text v-for="item in annualReturnLog" :key="item.year">{{ item.year }} : {{ item.return }}％</el-text>
+                <el-text>總報酬: {{ returnCard.repeat.totalReturn }}</el-text>
+                <el-text>區間最大回徹: {{ returnCard.repeat.maxDrawdownValue }}％</el-text>
+                <el-text>年度平均報酬率: {{ returnCard.repeat.annualReturn }}％</el-text>
+                <el-text>年度中位數報酬率: {{ returnCard.repeat.medianAnnualReturn }}％</el-text>
+                <el-text>最差年度報酬率: {{ returnCard.repeat.worstAnnualReturn }}％</el-text>
+                <el-text>最佳年度報酬率: {{ returnCard.repeat.bestAnnualReturn }}％</el-text>
+                <el-text>輪動次數: {{ returnCard.repeat.rotationsNumber }}</el-text>
+                <el-text v-for="item in returnCard.repeat.annualReturnLog" :key="item.year">{{ item.year }} : {{ item.return }}％</el-text>
+              </el-space>
+            </template>
+          </el-card>
+        </el-col>
+        <el-col :span="6">
+          <el-card shadow="hover" style="max-width: 480px">
+            <el-space direction="vertical" alignment="flex-start">
+              <el-text>回測方式: {{ returnCard.backtestType }}、不重複進場</el-text>
+              <el-text>平均報酬: {{ returnCard.averageReturn }}％</el-text>
+              <el-text>交易筆數: {{ multiStrategyTest ? tableDataMulti.length : tableData.length }}</el-text>
+              <el-text>平均賺賠比: {{ returnCard.profitLossRatio }}</el-text>
+              <el-text>報酬率中位數: {{ returnCard.medianReturn }}</el-text>
+              <el-text>勝率: {{ returnCard.winRate }}</el-text>
+
+
+            </el-space>
+            <template #footer>
+              <el-space direction="vertical" alignment="flex-start">
+                <el-text>總報酬: {{ returnCard.noRepeat.totalReturn }}</el-text>
+                <el-text>區間最大回徹: {{ returnCard.noRepeat.maxDrawdownValue }}％</el-text>
+                <el-text>年度平均報酬率: {{ returnCard.noRepeat.annualReturn }}％</el-text>
+                <el-text>年度中位數報酬率: {{ returnCard.noRepeat.medianAnnualReturn }}％</el-text>
+                <el-text>最差年度報酬率: {{ returnCard.noRepeat.worstAnnualReturn }}％</el-text>
+                <el-text>最佳年度報酬率: {{ returnCard.noRepeat.bestAnnualReturn }}％</el-text>
+                <el-text>輪動次數: {{ returnCard.noRepeat.rotationsNumber }}</el-text>
+                <el-text v-for="item in returnCard.noRepeat.annualReturnLog" :key="item.year">{{ item.year }} : {{ item.return }}％</el-text>
               </el-space>
             </template>
           </el-card>
@@ -69,40 +92,36 @@
       <!-- 每月交易次數分布 -->
       <!-- 以每月為單位，統計整段時間軸的報酬區間 -->
       <div style="width: 100%; overflow-x: scroll">
-        <div ref="myChartDom2" style="width: 1500px; height: 600px"></div>
+        <div ref="myChartDom1" style="width: 1500px; height: 600px"></div>
       </div>
 
       <!-- 交易日期報酬分布 -->
       <!-- 統計1～31號買入報酬分布 -->
       <div style="width: 100%; overflow-x: scroll">
-        <div ref="myChartDom3" style="width: 1500px; height: 600px"></div>
+        <div ref="myChartDom2" style="width: 1500px; height: 600px"></div>
       </div>
 
       <!-- 交易月報酬分布 -->
       <!-- 統計1～12月買入報酬分布 -->
       <div style="width: 100%; overflow-x: scroll">
-        <div ref="myChartDom6" style="width: 1500px; height: 600px"></div>
+        <div ref="myChartDom4" style="width: 1500px; height: 600px"></div>
       </div>
 
        <!-- 交易月最高最低期報酬分布 -->
       <!-- 統計1～12月買入報酬分布 -->
       <div style="width: 100%; overflow-x: scroll">
-        <div ref="myChartDom7" style="width: 1500px; height: 600px"></div>
+        <div ref="myChartDom5" style="width: 1500px; height: 600px"></div>
       </div>
-
-
-
-
 
       <!-- 每年報酬 -->
       <!-- 一年會單位統計滾動績效 -->
       <div style="width: 100%; overflow-x: scroll">
-        <div ref="myChartDom4" style="width: 1500px; height: 600px"></div>
+        <div ref="myChartDom3" style="width: 1500px; height: 600px"></div>
       </div>
 
-      <!-- 模擬資金報酬曲線 -->
+      <!-- 模擬資金報酬曲線 重複進場 -->
       <div style="width: 100%; overflow-x: scroll">
-        <div ref="myChartDom8" style="width: 1500px; height: 600px"></div>
+        <div ref="myChartDom6" style="width: 1500px; height: 600px"></div>
       </div>
 
       <!-- 表格 -->
@@ -142,278 +161,74 @@ import * as echarts from 'echarts';
 import { onMounted, reactive, ref } from 'vue';
 import { calculateSimulationResult, runMonteCarlo } from './utils/monteCarloMethod';
 
-// 輸出報表
-const total = reactive({
-  averageCompensation: 0
-})
+// 資料
 const tableData = ref([]) // 交易資料
 const tableDataMulti = ref([]) // 多策略交易資料
+
+// 圖表
 const chart = ref()
 const myChartDom = ref() // 報酬率分佈圖
-const myChartDom2 = ref() // 每月交易次數分布
-const myChartDom3 = ref() // 交易日期報酬分布
-const myChartDom4 = ref() // 每年報酬
-const myChartDom6 = ref() // 第四張圖表容器
-const myChartDom7 = ref() // 第四張圖表容器
-const myChartDom8 = ref() // 第四張圖表容器
-const isRepeat = ref(true) // 是否重複進場
+const myChartDom1 = ref() // 每月交易次數分布
+const myChartDom2 = ref() // 交易日期報酬分布
+const myChartDom3 = ref() // 每年報酬
+const myChartDom4 = ref() // 交易月報酬分布
+const myChartDom5 = ref() // 交易月最高最低期報酬分布
+const myChartDom6 = ref() // 資金 / 持倉成本 / 資產走勢圖 重複進場
+
+// 參數設定
+const fileNames = ref([]) // 檔案名稱
 const stocksPerRound = ref(10) // 持有限制
 const holdDays = ref(60) // 持有天數
-const totalReturn = ref('') // 總報酬率
-const maxDrawdownValue = ref() // 區間最大回徹
-const annualReturn = ref(0) // 年度平均報酬率
-const medianAnnualReturn = ref() // 年度中位數報酬率
-const worstAnnualReturn = ref() // 最差年度報酬率
-const bestAnnualReturn = ref() // 最佳年度報酬率
-const annualReturnLog = ref([]) // 年度報酬率紀錄
-const rotationsNumber = ref() // 輪動次數
-const fileNames = ref([]) // 檔案名稱
-const monteCarloTest = ref(false) // 蒙地卡羅模擬測試
 const outputChart = ref(true) // 是否輸出圖表
+const monteCarloTest = ref(false) // 蒙地卡羅模擬測試
 const multiStrategyTest = ref(false) // 多策略比較
 
-const averageReturn = ref(0) // 平均報酬率
-const profitLossRatio = ref(0) // 平均賺賠比
-const medianReturn = ref(0) // 報酬率中位數
-const winRate = ref(0) // 勝率
-const backtestType = ref('') // 回測方式
+// 報酬卡
+const returnCard = reactive({
+  backtestType: '', // 回測方式
+  averageReturn: 0, // 平均報酬率
+  profitLossRatio: 0, // 平均賺賠比
+  medianReturn: 0, // 報酬率中位數
+  winRate: 0, // 勝率
+  // 重複進場
+  repeat: {
+    totalReturn: 0, // 總報酬率
+    maxDrawdownValue: 0, // 區間最大回徹
+    annualReturn: 0, // 年度平均報酬率
+    medianAnnualReturn: 0, // 年度中位數報酬率
+    worstAnnualReturn: 0, // 最差年度報酬率
+    bestAnnualReturn: 0, // 最佳年度報酬率
+    annualReturnLog: [], // 年度報酬率紀錄
+    rotationsNumber: 0, // 輪動次數
+  },
+  // 不重複進場
+  noRepeat: {
+    totalReturn: 0, // 總報酬率
+    maxDrawdownValue: 0, // 區間最大回徹
+    annualReturn: 0, // 年度平均報酬率
+    medianAnnualReturn: 0, // 年度中位數報酬率
+    worstAnnualReturn: 0, // 最差年度報酬率
+    bestAnnualReturn: 0, // 最佳年度報酬率
+    annualReturnLog: [], // 年度報酬率紀錄
+    rotationsNumber: 0, // 輪動次數
+  },
+})
+// const backtestType = ref('') // 回測方式
+// const averageReturn = ref(0) // 平均報酬率
+// const profitLossRatio = ref(0) // 平均賺賠比
+// const medianReturn = ref(0) // 報酬率中位數
+// const winRate = ref(0) // 勝率
+// const totalReturn = ref('') // 總報酬率
+// const maxDrawdownValue = ref() // 區間最大回徹
 
-const reset = () => {
-  myChartDom.value = null
-  myChartDom2.value = null
-  tableData.value = []
-}
+// const annualReturn = ref(0) // 年度平均報酬率
+// const medianAnnualReturn = ref() // 年度中位數報酬率
+// const worstAnnualReturn = ref() // 最差年度報酬率
+// const bestAnnualReturn = ref() // 最佳年度報酬率
+// const annualReturnLog = ref([]) // 年度報酬率紀錄
+// const rotationsNumber = ref() // 輪動次數
 
-
-
-/************************************************
- * 主函式：同時計算 Buy&Hold + SMA 策略
- ************************************************/
- const backtest = (rawBars, initialCapital = 1000000, window = 200) =>  {
-  const bh = backtestBuyAndHold(rawBars, initialCapital);
-  const sma = backtestSMA(rawBars, window, initialCapital);
-
-  /************************************************
-   * 通用：績效統計
-   ************************************************/
-  function calcStats(equityCurve, rets) {
-    const startEquity = equityCurve[0].equity;
-    const endEquity = equityCurve[equityCurve.length - 1].equity;
-    const totalReturn = endEquity / startEquity - 1;
-
-    const tradingDays = equityCurve.length;
-    const years = tradingDays / 252;
-
-    const cagr = Math.pow(1 + totalReturn, 1 / years) - 1;
-
-    // 最大回撤
-    let maxEquity = equityCurve[0].equity;
-    let maxDrawdown = 0;
-    for (const pt of equityCurve) {
-      if (pt.equity > maxEquity) maxEquity = pt.equity;
-      const dd = pt.equity / maxEquity - 1;
-      if (dd < maxDrawdown) maxDrawdown = dd;
-    }
-
-    // 年化波動率
-    const valid = rets.slice(1);
-    const mean = valid.reduce((a, b) => a + b, 0) / valid.length;
-    const variance = valid.reduce((s, r) => s + (r - mean) ** 2, 0) / (valid.length - 1 || 1);
-    const dailyVol = Math.sqrt(variance);
-    const annualVol = dailyVol * Math.sqrt(252);
-
-    // 計算每一年的年化報酬率%數，格式為{ year: 2020, return: 10 }
-    function calcAnnualReturns(equityCurve) {
-      // equityCurve: [{date, equity}...]
-      const byYear = {};
-
-      for (const pt of equityCurve) {
-        const d = pt.date instanceof Date ? pt.date : new Date(pt.date);
-        const year = d.getFullYear();
-        if (!byYear[year]) {
-          byYear[year] = { startEquity: pt.equity, endEquity: pt.equity, first: d, last: d };
-        }
-        if (d < byYear[year].first) {
-          byYear[year].first = d;
-          byYear[year].startEquity = pt.equity;
-        }
-        if (d > byYear[year].last) {
-          byYear[year].last = d;
-          byYear[year].endEquity = pt.equity;
-        }
-      }
-
-      // 年化計算（按該年份的實際天數做）也可以只算單年單純報酬率
-      const annualReturns = [];
-      for (const yearStr of Object.keys(byYear).sort()) {
-        const year = Number(yearStr);
-        const y = byYear[year];
-        // 這裡假設每年完整，計算單純報酬率，不年化
-        const ret = y.endEquity / y.startEquity - 1;
-        annualReturns.push({ year, return: +(ret * 100).toFixed(2) });
-      }
-      return annualReturns;
-    }
-
-
-    return {
-      startEquity,
-      endEquity,
-      totalReturnPercent: `${(totalReturn * 100).toFixed(2)}%`,
-      cagr,
-      maxDrawdown,
-      annualVol,
-      tradingDays,
-      annualReturns: calcAnnualReturns(equityCurve),
-    };
-  }
-
-
-  /************************************************
-   * 策略1：Buy & Hold（從頭買到尾）
-   ************************************************/
-  function backtestBuyAndHold(rawBars, initialCapital = 1_000_000) {
-    const bars = [...rawBars]
-      .map(r => ({
-        date: new Date(r.Date),
-        date2: r.Date,
-        close: Number(r.Close),
-      }))
-      .sort((a, b) => a.date - b.date);
-
-    let equity = initialCapital;
-    const equityCurve = [];
-    const rets = [];
-
-    for (let i = 0; i < bars.length; i++) {
-      const bar = bars[i];
-      const prev = i > 0 ? bars[i - 1] : null;
-
-      let ret = 0;
-      if (prev) ret = bar.close / prev.close - 1;
-
-      equity *= (1 + ret);
-
-      equityCurve.push({ date: bar.date, date2: bar.date2, equity });
-      rets.push(ret);
-    }
-
-    return {
-      equityCurve,
-      stats: calcStats(equityCurve, rets),
-    };
-  }
-
-
-  /************************************************
-   * 策略2：SMA window 站上就持有、跌破就空手
-   ************************************************/
-  function backtestSMA(rawBars, window = 200, initialCapital = 1000000) {
-    const bars = [...rawBars]
-      .map(r => ({
-        date: new Date(r.Date),
-        date2: r.Date,
-        close: Number(r.Close),
-      }))
-      .sort((a, b) => a.date - b.date);
-
-    const n = bars.length;
-    if (n < window + 1) {
-      console.log(`資料太短，需要至少 ${window + 1} 根`);
-      return;
-    }
-
-    // 計算 SMA
-    let sum = 0;
-    for (let i = 0; i < n; i++) {
-      sum += bars[i].close;
-      if (i >= window) sum -= bars[i - window].close;
-      bars[i].sma = i >= window - 1 ? sum / window : null;
-    }
-
-    // 回測
-    let equity = initialCapital;
-    let position = 0; // 0: 空手 1: 持有
-    const equityCurve = [];
-    const rets = [];
-    let tradeCount = 0;
-
-    let aboveCount = 0; // 連續站上計數
-    let entryCount = 1; // 連續站上日
-
-    for (let i = 0; i < n; i++) {
-      const bar = bars[i];
-      const prev = i > 0 ? bars[i - 1] : null;
-
-      // 今日報酬（昨收 → 今收）
-      let ret = 0;
-      if (prev) ret = bar.close / prev.close - 1;
-
-      // 用昨天的 position 吃今天的報酬
-      equity *= (1 + ret * position);
-
-      equityCurve.push({
-        date: bar.date,
-        date2: bar.date2,
-        equity,
-        position,
-      });
-
-      rets.push(ret * position);
-
-      // 用今天收盤決定「明天」持倉
-      const sma = bar.sma;
-      let nextPos = position;
-
-      if (sma === null) {
-        aboveCount = 0;
-        nextPos = 0; // 一定空手
-      } else {
-        // 站上 -> 增加 aboveCount
-        if (bar.close > sma) {
-          aboveCount++;
-        } else {
-          aboveCount = 0;
-        }
-
-        if (position === 1) {
-          // 已持有，今日一旦跌破就馬上空手
-          if (bar.close < sma) {
-            nextPos = 0;
-          }
-        } else {
-          // 原本沒持股，現在連續站上 SMA X 天才進場
-          if (aboveCount >= entryCount) {
-            nextPos = 1;
-          }
-        }
-
-        // 補充：如果非滿足 entry，持續持有 aboveCount，但不進場
-        if (position === 0 && aboveCount < entryCount) {
-          nextPos = 0;
-        }
-      }
-
-      if (nextPos !== position) tradeCount++;
-
-      position = nextPos;
-    }
-
-    return {
-      equityCurve,
-      stats: calcStats(equityCurve, rets),
-      tradeCount,
-    };
-  }
-
-  return {
-    buyAndHold: bh.stats,
-    smaStrategy: sma.stats,
-    tradeCount: sma.tradeCount,
-    bhCurve: bh.equityCurve,
-    smaCurve: sma.equityCurve,
-  };
-}
+// 計算平均報酬率
 const averageReturnComputed = ((data) => {
   if (data.length === 0) return 0
 
@@ -424,7 +239,8 @@ const averageReturnComputed = ((data) => {
 
   return (total / data.length) * 100 // 乘 100 為百分比
 })
-// 平均賺賠比
+
+// 計算平均賺賠比
 const profitLossRatioComputed = ((data) => {
   const returns = data
     .map(i => parseFloat(i.return))
@@ -440,7 +256,8 @@ const profitLossRatioComputed = ((data) => {
   if (avgLoss === 0) return Infinity // 沒虧損交易，賺賠比無限大
   return avgProfit / Math.abs(avgLoss)
 })
-// 報酬率中位數
+
+// 計算報酬率中位數
 const medianReturnComputed = ((data) => {
   const returns = data
     .map(item => parseFloat(item.return))
@@ -460,7 +277,8 @@ const medianReturnComputed = ((data) => {
     return ((mid1 + mid2) / 2) * 100
   }
 })
-// 勝率
+
+// 計算勝率
 const winRateComputed = ((data) => {
   const returns = data
     .map(i => parseFloat(i.return))
@@ -472,6 +290,7 @@ const winRateComputed = ((data) => {
   return (winCount / returns.length) * 100
 })
 
+// 處理檔案
 const handleFile = async (event) => {
   const file = event.target.files?.[0];
   if (!file) {
@@ -512,31 +331,44 @@ const handleFile = async (event) => {
 
 // 單策略分析
 const dataAnalysisSingle = (data) => {
-    // 資金總報酬率
-    const { finalReturn, maxDrawdown, history, mean, median, worst, best, annualReturnsLog } = calculateSimulationResult(data, 10000, stocksPerRound.value, isRepeat.value)
-    totalReturn.value = finalReturn // 總報酬率
-    maxDrawdownValue.value = maxDrawdown // 區間最大回徹
-    rotationsNumber.value = history.length // 輪動次數
-    annualReturn.value = mean // 年度平均報酬率
-    medianAnnualReturn.value = median // 年度中位數報酬率
-    worstAnnualReturn.value = worst // 最差年度報酬率
-    bestAnnualReturn.value = best // 最佳年度報酬率
-    annualReturnLog.value = annualReturnsLog // 年度報酬率紀錄
+    // 資金總報酬率 重複進場
+    const repeatResult = calculateSimulationResult(data, 10000, stocksPerRound.value, true)
+    returnCard.repeat.totalReturn = repeatResult.finalReturn // 總報酬率
+    returnCard.repeat.maxDrawdownValue = repeatResult.maxDrawdown // 區間最大回徹
+    returnCard.repeat.rotationsNumber = repeatResult.history.length // 輪動次數
+    returnCard.repeat.annualReturn = repeatResult.mean // 年度平均報酬率
+    returnCard.repeat.medianAnnualReturn = repeatResult.median // 年度中位數報酬率
+    returnCard.repeat.worstAnnualReturn = repeatResult.worst // 最差年度報酬率
+    returnCard.repeat.bestAnnualReturn = repeatResult.best // 最佳年度報酬率
+    returnCard.repeat.annualReturnLog = repeatResult.annualReturnsLog // 年度報酬率紀錄
 
-    averageReturn.value = averageReturnComputed(data) // 平均報酬率
-    profitLossRatio.value = profitLossRatioComputed(data) // 平均賺賠比
-    medianReturn.value = medianReturnComputed(data) // 報酬率中位數
-    winRate.value = winRateComputed(data) // 勝率
+    // 不重複進場
+    const noRepeatResult = calculateSimulationResult(data, 10000, stocksPerRound.value, false)
+    returnCard.noRepeat.totalReturn = noRepeatResult.finalReturn // 總報酬率
+    returnCard.noRepeat.maxDrawdownValue = noRepeatResult.maxDrawdown // 區間最大回徹
+    returnCard.noRepeat.rotationsNumber = noRepeatResult.history.length // 輪動次數
+    returnCard.noRepeat.annualReturn = noRepeatResult.mean // 年度平均報酬率
+    returnCard.noRepeat.medianAnnualReturn = noRepeatResult.median // 年度中位數報酬率
+    returnCard.noRepeat.worstAnnualReturn = noRepeatResult.worst // 最差年度報酬率
+    returnCard.noRepeat.bestAnnualReturn = noRepeatResult.best // 最佳年度報酬率
+    returnCard.noRepeat.annualReturnLog = noRepeatResult.annualReturnsLog // 年度報酬率紀錄
+
+    // 總策略計算
+    returnCard.averageReturn = averageReturnComputed(data) // 平均報酬率
+    returnCard.profitLossRatio = profitLossRatioComputed(data) // 平均賺賠比
+    returnCard.medianReturn = medianReturnComputed(data) // 報酬率中位數
+    returnCard.winRate = winRateComputed(data) // 勝率
 
     // 輸出圖表
     if (outputChart.value) {
-      buildChart1(data) // 報酬率分佈圖
-      buildChart2(data) // 每月交易次數分布
-      buildChart3(data) // 交易日期報酬分布
-      buildChart4(data) // 每年報酬
-      buildChart6(data) // 交易月報酬分布
-      buildChart7(data) // 交易月最高最低期報酬分布
-      buildChart0(history) // 資金 / 持倉成本 / 資產走勢圖
+      buildChart(data) // 報酬率分佈圖
+      buildChart1(data) // 每月交易次數分布
+      buildChart2(data) // 交易日期報酬分布
+      buildChart3(data) // 每年報酬
+      buildChart4(data) // 交易月報酬分布
+      buildChart5(data) // 交易月最高最低期報酬分布
+      buildChart6(repeatResult.history, noRepeatResult.history) // 資金 / 持倉成本 / 資產走勢圖
+      // buildChart7(noRepeatResult.history) // 資金 / 持倉成本 / 資產走勢圖
     }
     // 蒙地卡羅模擬測試
     if (monteCarloTest.value) {
@@ -546,7 +378,7 @@ const dataAnalysisSingle = (data) => {
 
 // 多策略綜合計算
 const dataAnalysisMultiSummary = () => {
-  backtestType.value = '多策略綜合計算'
+  returnCard.backtestType = '多策略綜合計算'
   const data = []
   tableDataMulti.value.forEach(item => {
     item.forEach(item2 => {
@@ -563,7 +395,7 @@ const dataAnalysisMultiSummary = () => {
 
 // 多策略分析 分析全部重疊
 const dataAnalysisMulti = () => {
-  backtestType.value = '多策略分析'
+  returnCard.backtestType = '多策略分析'
   // console.log(findFullOverlaps([arr, arr2, arr3], ['策略A','策略B','策略C'])); // []
 
   const result = findFullOverlaps(tableDataMulti.value, fileNames.value)
@@ -663,253 +495,158 @@ const dataAnalysisMulti = () => {
 }
 // 多策略分析2 分析只重疊兩個策略
 const dataAnalysisMulti2 = () => {
-  backtestType.value = '多策略分析2'
-  const result = findAnyPairOverlaps(tableDataMulti.value, fileNames.value)
+  console.log('fileNames.value', fileNames.value)
+  returnCard.backtestType = '多策略分析2'
+  const result = findNameAndBuyDayOverlaps(tableDataMulti.value, fileNames.value)
   console.log('result', result)
   dataAnalysisSingle(result)
   // 蒙地卡羅
   if (monteCarloTest.value) {
     runMonteCarlo(result, 100, 10000, stocksPerRound.value)
   }
-  const { pairwiseCounts, overlapRatios } = analyzeOverlap(result);
-  console.log('pairwiseCounts', pairwiseCounts)
-  console.log('overlapRatios', overlapRatios)
-  function toDate(s) {
-    return new Date(s.replace(/-/g, '/'));
-  }
-  function fmt(d) {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const da = String(d.getDate()).padStart(2, '0');
-    return `${y}/${m}/${da}`;
-  }
 
-  // 合併同策略內的重疊區間（僅用於時間運算，不動原始物件）
-  function mergeIntervals(intervals) {
-    if (intervals.length === 0) return [];
-    const sorted = intervals
-      .map(iv => ({ start: toDate(iv.buyDay), end: toDate(iv.sellDay) }))
-      .sort((a, b) => a.start - b.start || a.end - b.end);
-    const merged = [sorted[0]];
-    for (let i = 1; i < sorted.length; i++) {
-      const last = merged[merged.length - 1];
-      const cur = sorted[i];
-      if (cur.start <= last.end) {
-        last.end = new Date(Math.max(+last.end, +cur.end));
-      } else {
-        merged.push(cur);
-      }
-    }
-    return merged;
-  }
+  console.log('getStrategyStats', getStrategyStats(result))
 
-  // 兩組(已合併)區間列表交集
-  function intersectIntervalLists(a, b) {
-    const res = [];
-    let i = 0, j = 0;
-    while (i < a.length && j < b.length) {
-      const s = new Date(Math.max(+a[i].start, +b[j].start));
-      const e = new Date(Math.min(+a[i].end, +b[j].end));
-      if (s <= e) res.push({ start: s, end: e });
-      if (a[i].end < b[j].end) i++; else j++;
-    }
-    return res;
-  }
 
-  // 檢查某策略的(已合併)區間列表是否與某段 seg 存在重疊
-  function hasOverlapWithSeg(intervals, seg) {
-    // 二分或線性皆可，這裡用線性簡潔
-    for (const iv of intervals) {
-      const s = new Date(Math.max(+iv.start, +seg.start));
-      const e = new Date(Math.min(+iv.end, +seg.end));
-      if (s <= e) return true;
-    }
-    return false;
-  }
-
-  // 取得某策略中某個 name 的任意原始物件，作為輸出基底
-  function pickSampleRecord(strategyList, name) {
-    return strategyList.find(r => r.name === name);
-  }
-
-  function findAnyPairOverlaps(strategyLists, strategyNames) {
+  /**
+   * 尋找多個策略之間，"同名字 + 同買入日期" 的重疊紀錄
+   * @param {Array<Array<Object>>} strategyLists - 二維陣列，每個內層代表一個策略的交易紀錄
+   * @param {Array<string>} fileNames - 策略名稱陣列，index 對應 strategyLists 的 index
+   * @returns {Array<Object>} - 所有有重疊的交易紀錄，一維陣列
+   */
+  function findNameAndBuyDayOverlaps(strategyLists, fileNames) {
     const N = strategyLists.length;
-    if (!strategyNames || strategyNames.length !== N) {
-      strategyNames = Array.from({ length: N }, (_, i) => `strategy_${i + 1}`);
+
+    // 若沒給名字或長度不符，補一組預設名稱
+    if (!fileNames || fileNames.length !== N) {
+      fileNames = Array.from({ length: N }, (_, i) => `strategy_${i + 1}`);
     }
 
-    // 每策略：依 name 分組，並生成已合併的時間區間（僅時間，方便交集）
-    const perStrategyMap = strategyLists.map(list => {
-      const byName = new Map();
-      for (const rec of list) {
-        if (!byName.has(rec.name)) byName.set(rec.name, []);
-        byName.get(rec.name).push(rec);
-      }
-      const mergedByName = new Map();
-      for (const [nm, records] of byName) {
-        mergedByName.set(nm, mergeIntervals(records));
-      }
-      return { raw: list, mergedByName };
-    });
+    // key = name + buyDay
+    const keyMap = new Map();
 
-    // 所有曾出現在至少一個策略的名稱集合
-    const allNames = new Set();
-    for (const { mergedByName } of perStrategyMap) {
-      for (const nm of mergedByName.keys()) allNames.add(nm);
+    for (let sIdx = 0; sIdx < N; sIdx++) {
+      const strategyName = fileNames[sIdx];
+      const trades = strategyLists[sIdx] || [];
+
+      for (const trade of trades) {
+        const { name, buyDay } = trade;
+        if (!name || !buyDay) continue; // 沒有 name 或 buyDay 的直接略過
+
+        const key = `${name}||${buyDay}`;
+        if (!keyMap.has(key)) {
+          keyMap.set(key, {
+            name,
+            buyDay,
+            entries: [] // 每一筆：{ strategyIndex, strategyName, record }
+          });
+        }
+        keyMap.get(key).entries.push({
+          strategyIndex: sIdx,
+          strategyName,
+          record: trade,
+        });
+      }
     }
 
-    const seen = new Set(); // 去重：key = name|buyDay|sellDay|sortedStrategies
     const result = [];
 
-    for (const nm of allNames) {
-      // 找出具有此 name 的策略索引
-      const carriers = [];
-      for (let i = 0; i < N; i++) {
-        if (perStrategyMap[i].mergedByName.has(nm)) carriers.push(i);
+    for (const bucket of keyMap.values()) {
+      const { entries } = bucket;
+
+      // 看看有幾個不同策略有這個 name+buyDay
+      const distinctStrategies = [...new Set(entries.map(e => e.strategyIndex))];
+      if (distinctStrategies.length < 2) {
+        // 只有一個策略有這檔股票+這個買入日，不算互相重疊
+        continue;
       }
-      if (carriers.length < 2) continue; // 至少要兩個策略含此 name
 
-      // 對所有 pair 做交集，得到 pair 的重疊區間
-      for (let a = 0; a < carriers.length; a++) {
-        for (let b = a + 1; b < carriers.length; b++) {
-          const i = carriers[a], j = carriers[b];
-          const interSegs = intersectIntervalLists(
-            perStrategyMap[i].mergedByName.get(nm),
-            perStrategyMap[j].mergedByName.get(nm)
-          );
-          if (interSegs.length === 0) continue;
+      // 有重疊 → 整理有哪些策略名稱（去重、排序，讓順序穩定）
+      const overlapStrategies = [...new Set(entries.map(e => e.strategyName))]
+        .sort((a, b) => a.localeCompare(b));
 
-          for (const seg of interSegs) {
-            // 擴充：把與 seg 有重疊的其他策略也列入 overlapStrategies（但條件仍為「至少兩個」）
-            const overlappers = new Set([i, j]);
-            for (let k = 0; k < N; k++) {
-              if (k === i || k === j) continue;
-              const list = perStrategyMap[k].mergedByName.get(nm);
-              if (!list) continue;
-              if (hasOverlapWithSeg(list, seg)) overlappers.add(k);
-            }
+      // 將所有參與重疊的原始紀錄輸出，每筆保留原欄位 + overlapStrategies
+      for (const entry of entries) {
+        result.push({
+          ...entry.record,
+          overlapStrategies,
+        });
+      }
+    }
 
-            // 產出一筆輸出。基底物件取 overlappers 中索引最小的那個策略的原始紀錄
-            const sortedIdx = [...overlappers].sort((x, y) => x - y);
-            const baseIdx = sortedIdx[0];
-            const baseRec = pickSampleRecord(strategyLists[baseIdx], nm);
-            if (!baseRec) continue; // 理論上不會
+    // 為了輸出穩定性，照 buyDay -> name -> code 排序
+    const parseDate = (str) => {
+      // 假設 str 形如 "2015/01/06" 或 "2015-01-06"
+      return new Date(str.replace(/-/g, '/'));
+    };
 
-            const out = {
-              ...baseRec, // 完整原欄位
-              buyDay: fmt(seg.start), // 改成重疊期間
-              sellDay: fmt(seg.end),
-              overlapStrategies: sortedIdx.map(idx => strategyNames[idx]),
-            };
+    result.sort((a, b) => {
+      const da = parseDate(a.buyDay) - parseDate(b.buyDay);
+      if (da !== 0 && !Number.isNaN(da)) return da;
 
-            const key = [
-              nm,
-              out.buyDay,
-              out.sellDay,
-              out.overlapStrategies.join(',')
-            ].join('|');
+      const nameCmp = (a.name || '').localeCompare(b.name || '');
+      if (nameCmp !== 0) return nameCmp;
 
-            if (!seen.has(key)) {
-              seen.add(key);
-              result.push(out);
-            }
-          }
+      return (a.code || '').localeCompare(b.code || '');
+    });
+
+    return result;
+  }
+
+  /**
+   * 統計每個策略出現幾次，並計算每個策略與其它策略共同出現的次數
+   * @param {Array<Object>} result - findNameAndBuyDayOverlaps 的輸出結果
+   * @returns {Object}
+   * {
+   *   strategyCount: { 策略名: 次數 },
+   *   coCount: { 策略名: { 其它策略名: 次數 } }
+   * }
+   */
+  function getStrategyStats(result) {
+    const strategyCount = {};  // 每個策略自身出現次數
+    const coCount = {};        // 每個策略與其他策略的共同出現次數
+
+    for (const rec of result) {
+      const arr = rec.overlapStrategies;
+      if (!arr || arr.length < 2) continue;
+
+      // ---- 計算單策略出現次數 ----
+      for (const s of arr) {
+        if (!strategyCount[s]) strategyCount[s] = 0;
+        strategyCount[s] += 1;
+      }
+
+      // ---- 計算策略之間的共同出現次數（pair）----
+      // 例如 ["A","B","C"] → AB, AC, BC
+      for (let i = 0; i < arr.length; i++) {
+        const s1 = arr[i];
+        if (!coCount[s1]) coCount[s1] = {};
+
+        for (let j = i + 1; j < arr.length; j++) {
+          const s2 = arr[j];
+
+          // s1 → s2
+          if (!coCount[s1][s2]) coCount[s1][s2] = 0;
+          coCount[s1][s2] += 1;
+
+          // s2 → s1（雙向統計）
+          if (!coCount[s2]) coCount[s2] = {};
+          if (!coCount[s2][s1]) coCount[s2][s1] = 0;
+          coCount[s2][s1] += 1;
         }
       }
     }
-    const getDate = (str) => new Date(str.replaceAll('/', '-'))
-    return result.sort((a, b) => getDate(a.buyDay) - getDate(b.buyDay));
-  }
 
+    return { strategyCount, coCount };
+  }
 }
 
-const analyzeOverlap = (result) => {
-  function toDate(s) { return new Date(String(s).replace(/-/g, '/')); }
-  function dayDiffInclusive(a, b) {
-    return Math.floor((toDate(b) - toDate(a)) / 86400000) + 1;
-  }
-  function mergeIntervalsRaw(ivList) {
-    if (!ivList || ivList.length === 0) return [];
-    const arr = ivList
-      .map(({ buyDay, sellDay }) => ({ start: toDate(buyDay), end: toDate(sellDay) }))
-      .sort((x, y) => x.start - y.start || x.end - y.end);
-    const out = [arr[0]];
-    for (let i = 1; i < arr.length; i++) {
-      const last = out[out.length - 1];
-      const cur = arr[i];
-      if (cur.start <= last.end) {
-        if (cur.end > last.end) last.end = cur.end;
-      } else {
-        out.push(cur);
-      }
-    }
-    return out.map(iv => ({
-      buyDay: iv.start.toISOString().slice(0,10).replace(/-/g,'/'),
-      sellDay: iv.end.toISOString().slice(0,10).replace(/-/g,'/')
-    }));
-  }
-  function sumDays(intervals) {
-    let total = 0;
-    for (const iv of intervals) total += dayDiffInclusive(iv.buyDay, iv.sellDay);
-    return total;
-  }
-  function pairs(arr) {
-    const out = [];
-    for (let i = 0; i < arr.length; i++) {
-      for (let j = i + 1; j < arr.length; j++) out.push([arr[i], arr[j]]);
-    }
-    return out;
-  }
-
-  // 找出所有策略名稱
-  const strategySet = new Set();
-  for (const row of result) {
-    for (const s of (row.overlapStrategies || [])) strategySet.add(s);
-  }
-  const strategies = [...strategySet];
-
-  // 1) 策略兩兩重疊次數
-  const countMap = new Map();
-  for (const s of strategies) countMap.set(s, {});
-  for (const row of result) {
-    const set = Array.from(new Set(row.overlapStrategies || []));
-    for (const [a, b] of pairs(set)) {
-      countMap.get(a)[b] = (countMap.get(a)[b] || 0) + 1;
-      countMap.get(b)[a] = (countMap.get(b)[a] || 0) + 1;
-    }
-  }
-  const pairwiseCounts = strategies.map((name) => {
-    const m = countMap.get(name);
-    let best = { name: null, count: 0 };
-    for (const [other, c] of Object.entries(m)) {
-      if (c > best.count) best = { name: other, count: c };
-    }
-    return { name, '重疊': m, mostOverlapWith: best };
-  });
-
-  // 2) 每個策略的重疊天數
-  const overlappedSegmentsByStrategy = new Map();
-  for (const s of strategies) overlappedSegmentsByStrategy.set(s, []);
-  for (const row of result) {
-    const iv = { buyDay: row.buyDay, sellDay: row.sellDay };
-    for (const s of (row.overlapStrategies || [])) {
-      overlappedSegmentsByStrategy.get(s).push(iv);
-    }
-  }
-  const overlapRatios = strategies.map((name) => {
-    const mergedOverlap = mergeIntervalsRaw(overlappedSegmentsByStrategy.get(name));
-    const overlapDays = sumDays(mergedOverlap);
-    return { name, overlapDays };
-  });
-
-  return { pairwiseCounts, overlapRatios };
-}
-
-const buildChart0 = (history) => {
+// 資金 / 持倉成本 / 資產走勢圖 重複進場
+const buildChart6 = (history, history2) => {
 
   // 輸出圖表
   // 計算 netAsset（市值 = 現金 + 成本，這裡不含未實現盈虧，純成本）
-  const chart = echarts.init(myChartDom8.value)
+  const chart = echarts.init(myChartDom6.value)
 
   chart.setOption({
     title: { text: '資金 / 持倉成本 / 資產走勢圖' },
@@ -918,16 +655,17 @@ const buildChart0 = (history) => {
       formatter: (params) => {
         const i = params[0].dataIndex
         const d = history[i]
+        const d2 = history2[i]
         return `
-          日期：${d.buyDay}<br/>
-          現金：$${d.capital}<br/>
-          總資產（估算）：$${parseFloat(d.netAsset)}<br/>
-          報酬率: ${d.returnRate}%
+          日期：${d?.buyDay} / ${d2?.buyDay}<br/>
+          現金：$${d?.capital.toFixed(2)} / $${d2?.capital.toFixed(2)}<br/>
+          總資產：$${parseFloat(d?.netAsset).toFixed(2)} / $${parseFloat(d2?.netAsset).toFixed(2)}<br/>
+          報酬率: ${d?.returnRate.toFixed(2)}% / ${d2?.returnRate.toFixed(2)}%
         `
       }
     },
     legend: {
-      data: ['現金', '總資產']
+      data: ['現金', '總資產', '現金2', '總資產2']
     },
     xAxis: {
       type: 'category',
@@ -948,13 +686,23 @@ const buildChart0 = (history) => {
         name: '總資產',
         type: 'line',
         data: history.map(h => parseFloat(h.netAsset))
+      },
+      {
+        name: '現金2',
+        type: 'line',
+        data: history2.map(h => parseFloat(h.capital))
+      },
+      {
+        name: '總資產2',
+        type: 'line',
+        data: history2.map(h => parseFloat(h.netAsset))
       }
     ]
   })
 }
 
 // 報酬率分佈圖
-const buildChart1 = (data) => {
+const buildChart = (data) => {
   const returns = data.map(i => parseFloat(i.return)).filter(r => !isNaN(r)).map(r => r * 100)
   const binWidth = 5
   const min = Math.floor(Math.min(...returns) / binWidth) * binWidth
@@ -984,7 +732,7 @@ const buildChart1 = (data) => {
   })
 }
 // 交易月分布
-const buildChart2 = (data) => {
+const buildChart1 = (data) => {
   const monthlyStats = {}
 
   data.forEach(item => {
@@ -1028,9 +776,9 @@ const buildChart2 = (data) => {
     scores.push(scoreObj ? scoreObj.data2 : null)
   }
 
-  if (!myChartDom2.value) return
+  if (!myChartDom1.value) return
 
-  const chart = echarts.init(myChartDom2.value)
+  const chart = echarts.init(myChartDom1.value)
   chart.setOption({
     title: { text: '每月交易統計圖表' },
     tooltip: {
@@ -1076,7 +824,7 @@ const buildChart2 = (data) => {
   })
 }
 // 交易日分布
-const buildChart3 = (data) => {
+const buildChart2 = (data) => {
   const dayStats = {}
 
   // 初始化 1～31 號
@@ -1121,8 +869,8 @@ const buildChart3 = (data) => {
   }
 
   // 繪圖
-  if (!myChartDom3.value) return
-  const chart = echarts.init(myChartDom3.value)
+  if (!myChartDom2.value) return
+  const chart = echarts.init(myChartDom2.value)
   chart.setOption({
     title: { text: '每月各日期交易統計' },
     tooltip: {
@@ -1175,7 +923,7 @@ const buildChart3 = (data) => {
   })
 }
 // 依據每筆交易的 buyDay，統計各月份報酬
-const buildChart6 = (data) => {
+const buildChart4 = (data) => {
   const monthStats = {}
 
   // 初始化 1～12 月
@@ -1220,7 +968,7 @@ const buildChart6 = (data) => {
   }
 
   // 畫圖
-  const chart = echarts.init(myChartDom6.value)
+  const chart = echarts.init(myChartDom4.value)
   chart.setOption({
     title: { text: '每年月份進場報酬統計' },
     tooltip: {
@@ -1256,7 +1004,7 @@ const buildChart6 = (data) => {
   })
 }
 // 統計每月最高與最低報酬
-const buildChart7 = (data) => {
+const buildChart5 = (data) => {
   const monthStats = {}
 
   // 初始化 1～12 月
@@ -1291,7 +1039,7 @@ const buildChart7 = (data) => {
     }
   }
 
-  const chart = echarts.init(myChartDom7.value)
+  const chart = echarts.init(myChartDom5.value)
   chart.setOption({
     title: { text: '每月報酬率最高與最低值' },
     tooltip: {
@@ -1325,7 +1073,7 @@ const buildChart7 = (data) => {
 }
 
 // 統計每年滾動報酬
-const buildChart4 = (data) => {
+const buildChart3 = (data) => {
   const yearlyStats = {}
 
   data.forEach(item => {
@@ -1361,7 +1109,7 @@ const buildChart4 = (data) => {
     counts.push(n)
   }
 
-  const chart = echarts.init(myChartDom4.value)
+  const chart = echarts.init(myChartDom3.value)
   chart.setOption({
     title: { text: '每年交易統計' },
     tooltip: {

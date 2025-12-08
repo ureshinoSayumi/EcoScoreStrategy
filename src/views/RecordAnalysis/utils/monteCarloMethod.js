@@ -102,10 +102,6 @@ export const calculateSimulationResult = (data, initialCapital = 10000, maxPosit
       const capitalPerStock = capital / vacant
       if (capitalPerStock <= 0) return
 
-      // 不要進場跟positionsname重複的
-      console.log('positions', positions);
-      console.log('stock', stock);
-
       // 是否允許重複進場
       if (isRepeat) {
         capital -= capitalPerStock
