@@ -22,7 +22,11 @@
            <el-form-item label="多策略比較">
              <el-switch v-model="multiStrategyTest" />
            </el-form-item>
+           <el-form-item label="選持續上漲的">
+             <el-switch v-model="selectContinuousUp" />
+           </el-form-item>
           <el-button type="primary" :disabled="multiStrategyTest" @click="dataAnalysisSingle(tableData)"> 單策略分析 </el-button>
+          <el-button type="primary" :disabled="multiStrategyTest" @click="dataAnalysisSingle2(tableData)"> 單策略分析2 </el-button>
           <el-button type="primary" :disabled="!multiStrategyTest"  @click="dataAnalysisMulti()"> 多策略分析 </el-button>
           <el-button type="primary" :disabled="!multiStrategyTest"  @click="dataAnalysisMulti2()"> 多策略分析2 </el-button>
           <el-button type="primary" :disabled="!multiStrategyTest"  @click="dataAnalysisMultiSummary()"> 多策略綜合計算 </el-button>
@@ -119,6 +123,12 @@
         <div ref="myChartDom3" style="width: 1500px; height: 600px"></div>
       </div>
 
+      <!-- 每半年報酬 -->
+      <!-- 每半年會單位統計滾動績效 -->
+      <div style="width: 100%; overflow-x: scroll">
+        <div ref="myChartDom7" style="width: 1500px; height: 600px"></div>
+      </div>
+
       <!-- 模擬資金報酬曲線 重複進場 -->
       <div style="width: 100%; overflow-x: scroll">
         <div ref="myChartDom6" style="width: 1500px; height: 600px"></div>
@@ -159,7 +169,7 @@ import { parseCSV } from '@/utils/csvReader';
 import { businessSignals } from '@/utils/data/businessSignals.js'; // 景氣指標
 import * as echarts from 'echarts';
 import { onMounted, reactive, ref } from 'vue';
-import { calculateSimulationResult, runMonteCarlo } from './utils/monteCarloMethod';
+import { calculateSimulationResult, calculateSimulationResult2, runMonteCarlo } from './utils/monteCarloMethod';
 
 // 資料
 const tableData = ref([]) // 交易資料
@@ -174,6 +184,7 @@ const myChartDom3 = ref() // 每年報酬
 const myChartDom4 = ref() // 交易月報酬分布
 const myChartDom5 = ref() // 交易月最高最低期報酬分布
 const myChartDom6 = ref() // 資金 / 持倉成本 / 資產走勢圖 重複進場
+const myChartDom7 = ref() // 每半年報酬
 
 // 參數設定
 const fileNames = ref([]) // 檔案名稱
@@ -182,6 +193,7 @@ const holdDays = ref(60) // 持有天數
 const outputChart = ref(true) // 是否輸出圖表
 const monteCarloTest = ref(false) // 蒙地卡羅模擬測試
 const multiStrategyTest = ref(false) // 多策略比較
+const selectContinuousUp = ref(false) // 選持續上漲的
 
 // 報酬卡
 const returnCard = reactive({
@@ -319,61 +331,158 @@ const handleFile = async (event) => {
   if (multiStrategyTest.value) {
     tableDataMulti.value.push(formatterData)
     fileNames.value.push(file.name)
+    console.log('tableDataMulti', tableDataMulti.value)
 
   } else {
     fileNames.value.push(file.name)
     document.title = file.name; // 修改網頁標籤的標題
     tableData.value =  formatterData
+    console.log('tableData', tableData.value)
 
   }
-  console.log('tableDataMulti', tableDataMulti.value)
 }
 
+const dataAnalysisSingle2 = (data) => {
+  console.log('dataAnalysisSingle2', data)
+  const repeatResult = calculateSimulationResult2(data, 10000, stocksPerRound.value, true)
+  console.log('repeatResult', repeatResult)
+
+
+  // 資金總報酬率 重複進場
+  returnCard.repeat.totalReturn = repeatResult.finalReturn // 總報酬率
+  returnCard.repeat.maxDrawdownValue = repeatResult.maxDrawdown // 區間最大回徹
+  returnCard.repeat.rotationsNumber = repeatResult.rotations // 輪動次數
+  returnCard.repeat.annualReturn = repeatResult.mean // 年度平均報酬率
+  returnCard.repeat.medianAnnualReturn = repeatResult.median // 年度中位數報酬率
+  returnCard.repeat.worstAnnualReturn = repeatResult.worst // 最差年度報酬率
+  returnCard.repeat.bestAnnualReturn = repeatResult.best // 最佳年度報酬率
+  returnCard.repeat.annualReturnLog = repeatResult.annualReturnsLog // 年度報酬率紀錄
+
+  // 不重複進場
+  const noRepeatResult = calculateSimulationResult2(data, 10000, stocksPerRound.value, false)
+  returnCard.noRepeat.totalReturn = noRepeatResult.finalReturn // 總報酬率
+  returnCard.noRepeat.maxDrawdownValue = noRepeatResult.maxDrawdown // 區間最大回徹
+  returnCard.noRepeat.rotationsNumber = noRepeatResult.rotations // 輪動次數
+  returnCard.noRepeat.annualReturn = noRepeatResult.mean // 年度平均報酬率
+  returnCard.noRepeat.medianAnnualReturn = noRepeatResult.median // 年度中位數報酬率
+  returnCard.noRepeat.worstAnnualReturn = noRepeatResult.worst // 最差年度報酬率
+  returnCard.noRepeat.bestAnnualReturn = noRepeatResult.best // 最佳年度報酬率
+  returnCard.noRepeat.annualReturnLog = noRepeatResult.annualReturnsLog // 年度報酬率紀錄
+
+  // 總策略計算
+  returnCard.averageReturn = averageReturnComputed(data) // 平均報酬率
+  returnCard.profitLossRatio = profitLossRatioComputed(data) // 平均賺賠比
+  returnCard.medianReturn = medianReturnComputed(data) // 報酬率中位數
+  returnCard.winRate = winRateComputed(data) // 勝率
+
+  // 輸出圖表
+  if (outputChart.value) {
+    buildChart(data) // 報酬率分佈圖
+    buildChart1(data) // 每月交易次數分布
+    buildChart2(data) // 交易日期報酬分布
+    buildChart3(data) // 每年報酬
+    buildChart4(data) // 交易月報酬分布
+    buildChart5(data) // 交易月最高最低期報酬分布
+    buildChart6(repeatResult.history, noRepeatResult.history) // 資金 / 持倉成本 / 資產走勢圖
+    buildChart7(data) // 每半年報酬
+    // buildChart7(noRepeatResult.history) // 資金 / 持倉成本 / 資產走勢圖
+  }
+  // 蒙地卡羅模擬測試
+  if (monteCarloTest.value) {
+    runMonteCarlo(tableData.value, 100, 10000, stocksPerRound.value)
+  }
+
+}
 // 單策略分析
 const dataAnalysisSingle = (data) => {
-    // 資金總報酬率 重複進場
-    const repeatResult = calculateSimulationResult(data, 10000, stocksPerRound.value, true)
-    returnCard.repeat.totalReturn = repeatResult.finalReturn // 總報酬率
-    returnCard.repeat.maxDrawdownValue = repeatResult.maxDrawdown // 區間最大回徹
-    returnCard.repeat.rotationsNumber = repeatResult.history.length // 輪動次數
-    returnCard.repeat.annualReturn = repeatResult.mean // 年度平均報酬率
-    returnCard.repeat.medianAnnualReturn = repeatResult.median // 年度中位數報酬率
-    returnCard.repeat.worstAnnualReturn = repeatResult.worst // 最差年度報酬率
-    returnCard.repeat.bestAnnualReturn = repeatResult.best // 最佳年度報酬率
-    returnCard.repeat.annualReturnLog = repeatResult.annualReturnsLog // 年度報酬率紀錄
+  function findHigherBuyItems(list) {
+    const MS_PER_DAY = 24 * 60 * 60 * 1000;
+    const MAX_DAYS = 90;
 
-    // 不重複進場
-    const noRepeatResult = calculateSimulationResult(data, 10000, stocksPerRound.value, false)
-    returnCard.noRepeat.totalReturn = noRepeatResult.finalReturn // 總報酬率
-    returnCard.noRepeat.maxDrawdownValue = noRepeatResult.maxDrawdown // 區間最大回徹
-    returnCard.noRepeat.rotationsNumber = noRepeatResult.history.length // 輪動次數
-    returnCard.noRepeat.annualReturn = noRepeatResult.mean // 年度平均報酬率
-    returnCard.noRepeat.medianAnnualReturn = noRepeatResult.median // 年度中位數報酬率
-    returnCard.noRepeat.worstAnnualReturn = noRepeatResult.worst // 最差年度報酬率
-    returnCard.noRepeat.bestAnnualReturn = noRepeatResult.best // 最佳年度報酬率
-    returnCard.noRepeat.annualReturnLog = noRepeatResult.annualReturnsLog // 年度報酬率紀錄
+    // 依 name 分組
+    const byName = new Map();
+    list.forEach(item => {
+      if (!byName.has(item.name)) byName.set(item.name, []);
+      byName.get(item.name).push(item);
+    });
 
-    // 總策略計算
-    returnCard.averageReturn = averageReturnComputed(data) // 平均報酬率
-    returnCard.profitLossRatio = profitLossRatioComputed(data) // 平均賺賠比
-    returnCard.medianReturn = medianReturnComputed(data) // 報酬率中位數
-    returnCard.winRate = winRateComputed(data) // 勝率
+    const result = new Set(); // 用 Set 避免重複
 
-    // 輸出圖表
-    if (outputChart.value) {
-      buildChart(data) // 報酬率分佈圖
-      buildChart1(data) // 每月交易次數分布
-      buildChart2(data) // 交易日期報酬分布
-      buildChart3(data) // 每年報酬
-      buildChart4(data) // 交易月報酬分布
-      buildChart5(data) // 交易月最高最低期報酬分布
-      buildChart6(repeatResult.history, noRepeatResult.history) // 資金 / 持倉成本 / 資產走勢圖
-      // buildChart7(noRepeatResult.history) // 資金 / 持倉成本 / 資產走勢圖
+    for (const [name, items] of byName.entries()) {
+      // 依 buyDay 排序
+      items.sort((a, b) => new Date(a.buyDay) - new Date(b.buyDay));
+
+      for (let i = 0; i < items.length; i++) {
+        const prev = items[i];
+        const prevDate = new Date(prev.buyDay);
+        const prevPrice = Number(prev.buyPrice);
+
+        for (let j = i + 1; j < items.length; j++) {
+          const next = items[j];
+          const diffDays = (new Date(next.buyDay) - prevDate) / MS_PER_DAY;
+
+          if (diffDays > MAX_DAYS) break;
+
+          if (Number(next.buyPrice) > prevPrice) {
+            result.add(next); // 只加後一筆，不重複
+          }
+
+        }
+      }
     }
-    // 蒙地卡羅模擬測試
-    if (monteCarloTest.value) {
-      runMonteCarlo(tableData.value, 100, 10000, stocksPerRound.value)
-    }
+
+    return Array.from(result); // 轉回 array
+  }
+
+  console.log('findCloseHigherBuys', findHigherBuyItems(data))
+
+  data = selectContinuousUp.value ? findHigherBuyItems(data) : data
+
+
+  // 資金總報酬率 重複進場
+  const repeatResult = calculateSimulationResult(data, 10000, stocksPerRound.value, true)
+  returnCard.repeat.totalReturn = repeatResult.finalReturn // 總報酬率
+  returnCard.repeat.maxDrawdownValue = repeatResult.maxDrawdown // 區間最大回徹
+  returnCard.repeat.rotationsNumber = repeatResult.history.length // 輪動次數
+  returnCard.repeat.annualReturn = repeatResult.mean // 年度平均報酬率
+  returnCard.repeat.medianAnnualReturn = repeatResult.median // 年度中位數報酬率
+  returnCard.repeat.worstAnnualReturn = repeatResult.worst // 最差年度報酬率
+  returnCard.repeat.bestAnnualReturn = repeatResult.best // 最佳年度報酬率
+  returnCard.repeat.annualReturnLog = repeatResult.annualReturnsLog // 年度報酬率紀錄
+
+  // 不重複進場
+  const noRepeatResult = calculateSimulationResult(data, 10000, stocksPerRound.value, false)
+  returnCard.noRepeat.totalReturn = noRepeatResult.finalReturn // 總報酬率
+  returnCard.noRepeat.maxDrawdownValue = noRepeatResult.maxDrawdown // 區間最大回徹
+  returnCard.noRepeat.rotationsNumber = noRepeatResult.history.length // 輪動次數
+  returnCard.noRepeat.annualReturn = noRepeatResult.mean // 年度平均報酬率
+  returnCard.noRepeat.medianAnnualReturn = noRepeatResult.median // 年度中位數報酬率
+  returnCard.noRepeat.worstAnnualReturn = noRepeatResult.worst // 最差年度報酬率
+  returnCard.noRepeat.bestAnnualReturn = noRepeatResult.best // 最佳年度報酬率
+  returnCard.noRepeat.annualReturnLog = noRepeatResult.annualReturnsLog // 年度報酬率紀錄
+
+  // 總策略計算
+  returnCard.averageReturn = averageReturnComputed(data) // 平均報酬率
+  returnCard.profitLossRatio = profitLossRatioComputed(data) // 平均賺賠比
+  returnCard.medianReturn = medianReturnComputed(data) // 報酬率中位數
+  returnCard.winRate = winRateComputed(data) // 勝率
+
+  // 輸出圖表
+  if (outputChart.value) {
+    buildChart(data) // 報酬率分佈圖
+    buildChart1(data) // 每月交易次數分布
+    buildChart2(data) // 交易日期報酬分布
+    buildChart3(data) // 每年報酬
+    buildChart4(data) // 交易月報酬分布
+    buildChart5(data) // 交易月最高最低期報酬分布
+    buildChart6(repeatResult.history, noRepeatResult.history) // 資金 / 持倉成本 / 資產走勢圖
+    buildChart7(data) // 每半年報酬
+    // buildChart7(noRepeatResult.history) // 資金 / 持倉成本 / 資產走勢圖
+  }
+  // 蒙地卡羅模擬測試
+  if (monteCarloTest.value) {
+    runMonteCarlo(tableData.value, 100, 10000, stocksPerRound.value)
+  }
 }
 
 // 多策略綜合計算
@@ -386,7 +495,7 @@ const dataAnalysisMultiSummary = () => {
     })
   })
   console.log('data', data)
-  dataAnalysisSingle(data)
+  dataAnalysisSingle2(data)
   if (monteCarloTest.value) {
     runMonteCarlo(data, 100, 10000, stocksPerRound.value)
   }
@@ -409,7 +518,7 @@ const dataAnalysisMulti = () => {
   function fmt(d) {
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, '0');
-    const da = String(d.getDate()).padStart(2, '0');
+    const da = String(d.getDate()).padStart(2, '0');d
     return `${y}/${m}/${da}`;
   }
 
@@ -657,7 +766,7 @@ const buildChart6 = (history, history2) => {
         const d = history[i]
         const d2 = history2[i]
         return `
-          日期：${d?.buyDay} / ${d2?.buyDay}<br/>
+          日期：${d?.buyDay || d.date} / ${d2?.buyDay || d2.date}<br/>
           現金：$${d?.capital.toFixed(2)} / $${d2?.capital.toFixed(2)}<br/>
           總資產：$${parseFloat(d?.netAsset).toFixed(2)} / $${parseFloat(d2?.netAsset).toFixed(2)}<br/>
           報酬率: ${d?.returnRate.toFixed(2)}% / ${d2?.returnRate.toFixed(2)}%
@@ -669,7 +778,7 @@ const buildChart6 = (history, history2) => {
     },
     xAxis: {
       type: 'category',
-      data: history.map(h => h.buyDay),
+      data: history.map(h => h.buyDay || h.date),
       axisLabel: { rotate: 45 }
     },
     yAxis: {
@@ -1143,6 +1252,86 @@ const buildChart3 = (data) => {
     ]
   })
 }
+
+// 統計每半年滾動報酬
+const buildChart7 = (data) => {
+  const halfStats = {}
+
+  data.forEach(item => {
+    const day = item.buyDay
+    const r = parseFloat(item.return)
+    if (!day || isNaN(r)) return
+
+    const year = day.slice(0, 4)
+    const month = parseInt(day.slice(5, 7))
+    const half = month <= 6 ? 'H1' : 'H2'
+    const key = `${year}-${half}`
+
+    if (!halfStats[key]) halfStats[key] = []
+    halfStats[key].push(r * 100) // 轉百分比
+  })
+
+  const periods = Object.keys(halfStats).sort()
+  const avgReturns = []
+  const medianReturns = []
+  const winRates = []
+  const counts = []
+
+  for (const p of periods) {
+    const list = halfStats[p]
+    const n = list.length
+    const win = list.filter(r => r > 0).length
+
+    const avg = list.reduce((a, b) => a + b, 0) / n
+    const sorted = [...list].sort((a, b) => a - b)
+
+    const median = n % 2 === 1
+      ? sorted[Math.floor(n / 2)]
+      : (sorted[n / 2 - 1] + sorted[n / 2]) / 2
+
+    const winRate = (win / n) * 100
+
+    avgReturns.push(avg.toFixed(2))
+    medianReturns.push(median.toFixed(2))
+    winRates.push(winRate.toFixed(2))
+    counts.push(n)
+  }
+
+  const chart = echarts.init(myChartDom7.value)
+  chart.setOption({
+    title: { text: '每半年交易統計' },
+    tooltip: {
+      trigger: 'axis',
+      formatter: function (params) {
+        const i = params[0].dataIndex
+        return `
+          期間：${periods[i]}<br/>
+          筆數：${counts[i]}<br/>
+          平均報酬：${avgReturns[i]}%<br/>
+          中位報酬：${medianReturns[i]}%<br/>
+          勝率：${winRates[i]}%
+        `
+      }
+    },
+    legend: { data: ['平均報酬', '中位報酬', '勝率', '交易筆數'] },
+    xAxis: {
+      type: 'category',
+      data: periods,
+      name: '期間',
+      axisLabel: { rotate: 0 }
+    },
+    yAxis: [
+      { type: 'value', name: '百分比 / 筆數' }
+    ],
+    series: [
+      { name: '平均報酬', type: 'line', data: avgReturns },
+      { name: '中位報酬', type: 'line', data: medianReturns },
+      { name: '勝率', type: 'line', data: winRates },
+      { name: '交易筆數', type: 'bar', data: counts }
+    ]
+  })
+}
+
 onMounted(() => {
   // buildECharts()
 })

@@ -70,6 +70,7 @@ export const calculateSimulationResult = (data, initialCapital = 10000, maxPosit
   let capital = initialCapital
   let positions = [] // { stock, buyDate, sellDate, capitalUsed }
   const history = []
+  const positionsMap = {}
 
   // 照 buyDay 排序
   const sorted = data
@@ -155,6 +156,13 @@ export const calculateSimulationResult = (data, initialCapital = 10000, maxPosit
 
 
     }
+    //
+    // 計算 positions 去掉重複後，每個持倉次數的出現次數
+    const uniquePositions = [...new Set(positions.map(p => p.stock.name))]
+    if (!positionsMap[uniquePositions.length]) {
+      positionsMap[uniquePositions.length] = 1
+    }
+    positionsMap[uniquePositions.length] += 1
   })
 
   // 出清剩餘倉位
@@ -241,6 +249,16 @@ export const calculateSimulationResult = (data, initialCapital = 10000, maxPosit
 
 
   console.log(history)
+  // 把 positionsMap 全部加起來
+  const totalPositions = Object.values(positionsMap).reduce((a, b) => a + b, 0)
+  console.log('totalPositions', totalPositions)
+  // 計算 positionsMap 的平均值
+  for (const key in positionsMap) {
+    positionsMap[key] += `/ ${((positionsMap[key] / totalPositions) * 100).toFixed(2)}%`
+  }
+  console.log('positionsMap', positionsMap)
+
+
   // console.log('sdate', sdate);
   // console.log('edate', edate);
   // console.log('sdateArr', sdateArr);
@@ -251,6 +269,225 @@ export const calculateSimulationResult = (data, initialCapital = 10000, maxPosit
     // maxDrawdown: (maxDrawdown * 100).toFixed(2), // 區間最大回徹
     maxDrawdown: maxDrawdown * 100, // 區間最大回徹
     rotations: history.length, // 輪動次數
+    mean, // 年度平均報酬率
+    median, // 年度中位數報酬率
+    worst, // 最差年度報酬率
+    best, // 最佳年度報酬率
+    annualReturnsLog: annualReturnsLog, // 年度報酬率紀錄
+    history, // 歷史資料
+  }
+}
+
+export const calculateSimulationResult2 = (tradeLog, initialCapital = 10000, maxPositions = 10, isRepeat = true) => {
+  // 把日期格式轉換成 YYYY-MM-DD
+  const formatDate = (str) => str.replaceAll('/', '-')
+
+  // 建立歷史日期
+  function genDateRange(startDate, endDate) {
+    const result = [];
+    // 將傳入日期轉成 Date
+    let current = new Date(startDate);
+    if (isNaN(current)) throw new Error("無效日期格式");
+    // 今天日期（只取到 YYYY-MM-DD，不含時間）
+    const today = new Date(endDate);
+    today.setHours(0, 0, 0, 0);
+    while (current <= today) {
+      // 轉成 YYYY-MM-DD
+      const yyyy = current.getFullYear();
+      const mm = String(current.getMonth() + 1).padStart(2, '0');
+      const dd = String(current.getDate()).padStart(2, '0');
+      result.push({
+        date: `${yyyy}-${mm}-${dd}`
+      });
+      // 加一天
+      current.setDate(current.getDate() + 1);
+    }
+    return result;
+  }
+
+  // 整理輸入資料，照 buyDay 排序
+  tradeLog = tradeLog
+    .filter(i =>
+      i.buyDay && i.sellDay &&
+      !isNaN(parseFloat(i.return))
+    )
+    .sort((a, b) => new Date(formatDate(a.buyDay)) - new Date(formatDate(b.buyDay)))
+  // 如果交易紀錄為空，則回傳空物件
+  if (!tradeLog.length) {
+    return {
+      finalReturn: 0,
+      maxDrawdown: 0,
+      rotations: 0,
+      mean: 0,
+      median: 0,
+      worst: 0,
+      best: 0,
+      annualReturnsLog: [],
+      history: [],
+    }
+  }
+
+  const startDate = formatDate(tradeLog[0].buyDay) // 開始日期
+  const endDate = formatDate(tradeLog[tradeLog.length - 1].buyDay) // 結束日期
+  const history = genDateRange(startDate, endDate) // 生成歷史日期區間
+
+  // 用日期當key建立交易紀錄map表
+  const tradeLogMap = new Map();
+  tradeLog.forEach(item => {
+    if (!tradeLogMap.has(formatDate(item.buyDay))) {
+      tradeLogMap.set(formatDate(item.buyDay), []);
+    }
+    tradeLogMap.get(formatDate(item.buyDay)).push(item);
+
+  });
+
+
+  let capital = initialCapital // 初始資金
+  let positions = [] // 持倉紀錄 { stock, buyDate, sellDate, capitalUsed }
+  let rotations = 0 // 輪動次數
+  let todayTradeLog = [] // 當天交易紀錄
+
+  // 開始模擬歷史日期滾動
+  history.forEach((item, index) => {
+    // 檢查已到期部位，結算
+    for (let i = positions.length - 1; i >= 0; i--) {
+      const date = new Date(item.date)
+      const sellDate = new Date(formatDate(positions[i].sellDay))
+      if (date >= sellDate) {
+        const pos = positions[i]
+        const r = parseFloat(pos.return)
+        const profit = !isNaN(r)
+          ? pos.capitalUsed * (1 + r)
+          : pos.capitalUsed
+        capital += profit
+        positions.splice(i, 1)
+      }
+    }
+
+    // 若倉位未滿，進場
+    if (positions.length < maxPositions) {
+      const vacant = maxPositions - positions.length // 空倉數量 = 最大持倉數量 - 目前持倉數量
+      const capitalPerStock = capital / vacant // 每倉位資金 = 總資金 / 空倉數量
+
+      // 從交易紀錄map取得今日交易紀錄
+      todayTradeLog = tradeLogMap.get(item.date)
+      if (todayTradeLog?.length) {
+
+        if (isRepeat) {
+          const stock = todayTradeLog[0]
+          // 隨機陣列中的一筆
+          // const randomIndex = Math.floor(Math.random() * todayTradeLog.length)
+          capital -= capitalPerStock
+          positions.push({
+            ...stock,
+            capitalUsed: capitalPerStock
+          })
+          rotations++
+        } else {
+          // 找出今天第一檔「尚未持有」的股票
+          const stock = todayTradeLog.find(s => !positions.some(p => p.name === s.name))
+
+          if (stock) {
+            capital -= capitalPerStock
+            positions.push({
+              ...stock,
+              capitalUsed: capitalPerStock
+            })
+            rotations++
+          }
+        }
+      }
+    }
+
+    // 最後一天的出清剩餘倉位，結算資料
+    if (index === history.length - 1) {
+      positions.forEach(pos => {
+        const r = parseFloat(pos.return)
+        const profit = !isNaN(r)
+          ? pos.capitalUsed * (1 + r)
+          : pos.capitalUsed
+        capital += profit
+      })
+      positions = []
+    }
+
+    // 每日結算
+    const positionCost = positions.reduce((sum, p) => sum + p.capitalUsed, 0) // 持倉成本
+    const netAsset = capital + positionCost // 當天淨資產 = 當天資金 + 持倉成本
+
+    item.positions = JSON.parse(JSON.stringify(positions)) // 持倉紀錄
+    item.tradeLogMap = todayTradeLog ? JSON.parse(JSON.stringify(todayTradeLog)) : [] // 當天交易紀錄
+    item.capital = capital // 當天資金
+    item.netAsset = netAsset // 當天淨資產
+    item.returnRate = (netAsset / initialCapital - 1) * 100 // 當天報酬率
+    item.positionCount = positions.length // 當天持倉數
+  })
+
+
+  // 統計總報酬
+  const finalReturn = ((capital / initialCapital - 1) * 100)
+
+  // ✅ 最大回撤
+  let maxAsset = parseFloat(history[0]?.netAsset || 0)
+  let maxDrawdown = 0
+  let sdate = ''
+  let edate = ''
+  const sdateArr = []
+  const edateArr = []
+
+  history.forEach(h => {
+    const net = parseFloat(h.netAsset)
+    if (net > maxAsset) {
+      maxAsset = net
+      edate = h.date
+      edateArr.push(edate)
+    }
+    const dd = (maxAsset - net) / maxAsset
+    if (dd > maxDrawdown) {
+      maxDrawdown = dd
+      sdate = h.date
+      sdateArr.push(sdate)
+    }
+  })
+
+  // ✅ 年化報酬率統計
+  const annualReturnMap = {}
+  history.forEach(h => {
+    const year = new Date(h.date).getFullYear()
+    if (!annualReturnMap[year]) annualReturnMap[year] = []
+    annualReturnMap[year].push(h)
+  })
+  console.log('annualReturnMap', annualReturnMap)
+  const annualReturns = []
+  const annualReturnsLog = []
+
+  for (const year in annualReturnMap) {
+    const records = annualReturnMap[year].sort((a, b) => new Date(a.date) - new Date(b.date))
+    const start = records[0].netAsset
+    const end = records[records.length - 1].netAsset
+    if (!start || !end || start <= 0) continue
+    const r = (end / start - 1) * 100
+    annualReturns.push(r)
+    annualReturnsLog.push({ year, start, end, return: r })
+  }
+
+  const mean = annualReturns.reduce((a, b) => a + b, 0) / (annualReturns.length || 1)
+  const sorted2 = [...annualReturns].sort((a, b) => a - b)
+  const mid = Math.floor(sorted2.length / 2)
+  const median = sorted2.length
+    ? (sorted2.length % 2 === 0
+      ? (sorted2[mid - 1] + sorted2[mid]) / 2
+      : sorted2[mid])
+    : 0
+
+  const worst = sorted2[0] ?? 0
+  const best = sorted2[sorted2.length - 1] ?? 0
+
+  console.log('history', history)
+  return {
+    finalReturn, // 總報酬率
+    maxDrawdown: maxDrawdown * 100, // 區間最大回徹
+    rotations, // 輪動次數
     mean, // 年度平均報酬率
     median, // 年度中位數報酬率
     worst, // 最差年度報酬率
