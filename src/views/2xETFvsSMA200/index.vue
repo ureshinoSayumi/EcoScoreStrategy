@@ -104,6 +104,9 @@
       <div style="width: 100%; overflow-x: scroll">
         <div ref="myChartDom2" style="width: 1500px; height: 600px"></div>
       </div>
+      <div style="width: 100%; overflow-x: scroll">
+        <div ref="myChartDom3" style="width: 1500px; height: 600px"></div>
+      </div>
     </el-main>
   </el-container>
 </template>
@@ -116,6 +119,7 @@ import { onMounted, ref } from 'vue';
 const SMA = ref(200)
 const myChartDom = ref()
 const myChartDom2 = ref()
+const myChartDom3 = ref()
 const tableData = ref([]) // 交易資料
 const fileNames = ref([]) // 檔案名稱
 
@@ -319,6 +323,7 @@ const backtest = (
       if (i >= window) sum -= bars[i - window].close;
       bars[i].sma = i >= window - 1 ? sum / window : null;
     }
+    console.log('bars', bars);
 
     // 回測
     let equity = initialCapital;
@@ -398,7 +403,12 @@ const backtest = (
       // 每次交易產生時，報酬扣掉0.3％手續費
       if (nextPos !== position) {
         tradeCount++;
-        // console.log("bar.date2", bar.date2, nextPos, retLog);
+        console.log("bar.date2", {
+          date: bar.date,
+          date2: bar.date2,
+          equity,
+          position,
+        });
         equity *= 1 - (fee / 100); // 扣掉手續費
       }
 
@@ -439,6 +449,7 @@ const testSMA200 = async (event) => {
   // sellBand.value: 跌破SMA200% band
   // fee.value: 手續費
   backtestSMA200(data);
+  test(data, SMA.value)
 
 }
 
@@ -473,6 +484,64 @@ const backtestSMA200 = (data) => {
 
   // 輸出圖表
   buildChart(result.bhCurve, result.smaCurve);
+}
+
+const test = (data, window) => {
+   const bars = [...data]
+      .map(r => ({
+        date: new Date(r.Date),
+        date2: r.Date,
+        close: Number(r.Close),
+      }))
+      .sort((a, b) => a.date - b.date);
+   // 計算 SMA
+
+  let sum = 0;
+  for (let i = 0; i < bars.length; i++) {
+    sum += bars[i].close;
+    if (i >= window) sum -= bars[i - window].close;
+    bars[i].sma = i >= window - 1 ? sum / window : null;
+    bars[i].diffPercent = ((bars[i].close - bars[i].sma) / bars[i].sma) * 100;
+
+  }
+  console.log('testbars', bars);
+
+  const distribution = bars.reduce((acc, item) => {
+  if (item.diffPercent == null || item.diffPercent === Infinity ) return acc;
+
+    const bucket = Math.trunc(item.diffPercent); // 去小數
+
+    acc[bucket] = (acc[bucket] || 0) + 1;
+    return acc;
+  }, {});
+
+  console.log(distribution);
+
+  const histogramData = Object.entries(distribution)
+  .map(([value, count]) => ({
+    value: Number(value),
+    count
+  }))
+  .sort((a, b) => a.value - b.value);
+
+  console.log('histogramData', histogramData);
+
+  const chart = echarts.init(myChartDom3.value)
+  chart.setOption({
+    title: { text: '報酬率分布圖' },
+    tooltip: { trigger: 'item' },
+    xAxis: {
+      type: 'category',
+      name: '報酬區間',
+      data: histogramData.map(h => h.value),
+      axisLabel: { rotate: 45 }
+    },
+    yAxis: { type: 'value', name: '筆數' },
+    series: [{ type: 'bar', data: histogramData.map(h => h.count), name: '出現次數' }]
+  })
+
+
+
 }
 
 const buildChart = (bhCurve, smaCurve) => {

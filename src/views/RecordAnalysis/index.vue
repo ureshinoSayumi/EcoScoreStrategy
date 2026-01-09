@@ -10,9 +10,6 @@
            <el-form-item label="持有限制">
              <el-input-number v-model="stocksPerRound" :min="0" size="small" />
            </el-form-item>
-           <el-form-item label="持有天數">
-             <el-input-number v-model="holdDays" :min="0" size="small" />
-           </el-form-item>
            <el-form-item label="輸出圖表">
              <el-switch v-model="outputChart" />
            </el-form-item>
@@ -25,10 +22,12 @@
            <el-form-item label="選持續上漲的">
              <el-switch v-model="selectContinuousUp" />
            </el-form-item>
+           <el-form-item label="一日買入多次">
+             <el-switch v-model="dayBuyRepeat" />
+           </el-form-item>
           <el-button type="primary" :disabled="multiStrategyTest" @click="dataAnalysisSingle(tableData)"> 單策略分析 </el-button>
           <el-button type="primary" :disabled="multiStrategyTest" @click="dataAnalysisSingle2(tableData)"> 單策略分析2 </el-button>
-          <el-button type="primary" :disabled="!multiStrategyTest"  @click="dataAnalysisMulti()"> 多策略分析 </el-button>
-          <el-button type="primary" :disabled="!multiStrategyTest"  @click="dataAnalysisMulti2()"> 多策略分析2 </el-button>
+          <el-button type="primary" :disabled="!multiStrategyTest"  @click="dataAnalysisMulti()"> 多策略分析2 </el-button>
           <el-button type="primary" :disabled="!multiStrategyTest"  @click="dataAnalysisMultiSummary()"> 多策略綜合計算 </el-button>
         </el-col>
       </el-row>
@@ -42,8 +41,6 @@
               <el-text>平均賺賠比: {{ returnCard.profitLossRatio }}</el-text>
               <el-text>報酬率中位數: {{ returnCard.medianReturn }}</el-text>
               <el-text>勝率: {{ returnCard.winRate }}</el-text>
-
-
             </el-space>
             <template #footer>
               <el-space direction="vertical" alignment="flex-start">
@@ -86,6 +83,21 @@
           </el-card>
         </el-col>
       </el-row>
+
+      <!-- 持股分散度 -->
+      <div style="width: 100%; overflow-x: scroll">
+        <div ref="myChartDom8" style="width: 1500px; height: 600px"></div>
+      </div>
+
+      <!-- 買入股票與平均報酬率 -->
+      <div style="width: 100%; overflow-x: scroll">
+        <div ref="myChartDom9" style="width: 1500px; height: 600px"></div>
+      </div>
+
+      <!-- 買入股票與平均報酬率比較 -->
+      <div style="width: 100%; overflow-x: scroll">
+        <div ref="myChartDom10" style="width: 1500px; height: 600px"></div>
+      </div>
 
       <!-- 報酬率分佈圖 -->
       <!-- 統計報酬％數區間分布 -->
@@ -185,15 +197,18 @@ const myChartDom4 = ref() // 交易月報酬分布
 const myChartDom5 = ref() // 交易月最高最低期報酬分布
 const myChartDom6 = ref() // 資金 / 持倉成本 / 資產走勢圖 重複進場
 const myChartDom7 = ref() // 每半年報酬
+const myChartDom8 = ref() // 持股分散度
+const myChartDom9 = ref() // 買入股票與平均報酬率
+const myChartDom10 = ref() // 買入股票與平均報酬率比較
 
 // 參數設定
 const fileNames = ref([]) // 檔案名稱
 const stocksPerRound = ref(10) // 持有限制
-const holdDays = ref(60) // 持有天數
 const outputChart = ref(true) // 是否輸出圖表
 const monteCarloTest = ref(false) // 蒙地卡羅模擬測試
 const multiStrategyTest = ref(false) // 多策略比較
 const selectContinuousUp = ref(false) // 選持續上漲的
+const dayBuyRepeat = ref(true) // 一日買入多次
 
 // 報酬卡
 const returnCard = reactive({
@@ -212,6 +227,8 @@ const returnCard = reactive({
     bestAnnualReturn: 0, // 最佳年度報酬率
     annualReturnLog: [], // 年度報酬率紀錄
     rotationsNumber: 0, // 輪動次數
+    positionDistribution: {}, // 持股分散度
+    stockNameMap: {}, // 股票名稱紀錄
   },
   // 不重複進場
   noRepeat: {
@@ -223,6 +240,8 @@ const returnCard = reactive({
     bestAnnualReturn: 0, // 最佳年度報酬率
     annualReturnLog: [], // 年度報酬率紀錄
     rotationsNumber: 0, // 輪動次數
+    positionDistribution: {}, // 持股分散度
+    stockNameMap: {}, // 股票名稱紀錄
   },
 })
 // const backtestType = ref('') // 回測方式
@@ -317,13 +336,13 @@ const handleFile = async (event) => {
         index: item["序號"],
         buyDay: item["進場時間"],
         buyPrice: item["進場價格"],
-        buyDirection: item["進場方向"],
+        // buyDirection: item["進場方向"],
         sellDay: item["出場時間"],
         sellPrice: item["出場價格"],
-        sellDirection: item["出場方向"],
-        days: item["持有區間"],
+        // sellDirection: item["出場方向"],
+        // days: item["持有區間"],
         return: item["報酬率"],
-        note: item["訊息"],
+        // note: item["訊息"],
         // sell: item // 若你仍要保留完整原始資料
       }
   })
@@ -344,7 +363,7 @@ const handleFile = async (event) => {
 
 const dataAnalysisSingle2 = (data) => {
   console.log('dataAnalysisSingle2', data)
-  const repeatResult = calculateSimulationResult2(data, 10000, stocksPerRound.value, true)
+  const repeatResult = calculateSimulationResult2(data, 10000, stocksPerRound.value, true, dayBuyRepeat.value)
   console.log('repeatResult', repeatResult)
 
 
@@ -357,9 +376,11 @@ const dataAnalysisSingle2 = (data) => {
   returnCard.repeat.worstAnnualReturn = repeatResult.worst // 最差年度報酬率
   returnCard.repeat.bestAnnualReturn = repeatResult.best // 最佳年度報酬率
   returnCard.repeat.annualReturnLog = repeatResult.annualReturnsLog // 年度報酬率紀錄
+  returnCard.repeat.positionDistribution = repeatResult.positionDistribution // 持股分散度
+  returnCard.repeat.stockNameMap = repeatResult.stockNameMap // 股票名稱紀錄
 
   // 不重複進場
-  const noRepeatResult = calculateSimulationResult2(data, 10000, stocksPerRound.value, false)
+  const noRepeatResult = calculateSimulationResult2(data, 10000, stocksPerRound.value, false, dayBuyRepeat.value)
   returnCard.noRepeat.totalReturn = noRepeatResult.finalReturn // 總報酬率
   returnCard.noRepeat.maxDrawdownValue = noRepeatResult.maxDrawdown // 區間最大回徹
   returnCard.noRepeat.rotationsNumber = noRepeatResult.rotations // 輪動次數
@@ -368,6 +389,8 @@ const dataAnalysisSingle2 = (data) => {
   returnCard.noRepeat.worstAnnualReturn = noRepeatResult.worst // 最差年度報酬率
   returnCard.noRepeat.bestAnnualReturn = noRepeatResult.best // 最佳年度報酬率
   returnCard.noRepeat.annualReturnLog = noRepeatResult.annualReturnsLog // 年度報酬率紀錄
+  returnCard.noRepeat.positionDistribution = noRepeatResult.positionDistribution // 持股分散度
+  returnCard.noRepeat.stockNameMap = noRepeatResult.stockNameMap // 股票名稱紀錄
 
   // 總策略計算
   returnCard.averageReturn = averageReturnComputed(data) // 平均報酬率
@@ -386,6 +409,8 @@ const dataAnalysisSingle2 = (data) => {
     buildChart6(repeatResult.history, noRepeatResult.history) // 資金 / 持倉成本 / 資產走勢圖
     buildChart7(data) // 每半年報酬
     // buildChart7(noRepeatResult.history) // 資金 / 持倉成本 / 資產走勢圖
+    buildChart8(returnCard.repeat.positionDistribution, returnCard.noRepeat.positionDistribution) // 持股分散度
+    buildChart10(data) // 買入股票與平均報酬率
   }
   // 蒙地卡羅模擬測試
   if (monteCarloTest.value) {
@@ -502,113 +527,13 @@ const dataAnalysisMultiSummary = () => {
 
 }
 
-// 多策略分析 分析全部重疊
-const dataAnalysisMulti = () => {
-  returnCard.backtestType = '多策略分析'
-  // console.log(findFullOverlaps([arr, arr2, arr3], ['策略A','策略B','策略C'])); // []
-
-  const result = findFullOverlaps(tableDataMulti.value, fileNames.value)
-  dataAnalysisSingle(result)
-
-  console.log('result', result)
-
-  function toDate(s) {
-    return new Date(s.replace(/-/g, '/'));
-  }
-  function fmt(d) {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const da = String(d.getDate()).padStart(2, '0');d
-    return `${y}/${m}/${da}`;
-  }
-
-  function mergeIntervals(intervals) {
-    if (intervals.length === 0) return [];
-    const sorted = intervals
-      .map(iv => ({ start: toDate(iv.buyDay), end: toDate(iv.sellDay) }))
-      .sort((a, b) => a.start - b.start || a.end - b.end);
-    const merged = [sorted[0]];
-    for (let i = 1; i < sorted.length; i++) {
-      const last = merged[merged.length - 1];
-      const cur = sorted[i];
-      if (cur.start <= last.end) {
-        last.end = new Date(Math.max(+last.end, +cur.end));
-      } else {
-        merged.push(cur);
-      }
-    }
-    return merged;
-  }
-
-  function intersectIntervalLists(a, b) {
-    const res = [];
-    let i = 0, j = 0;
-    while (i < a.length && j < b.length) {
-      const s = new Date(Math.max(+a[i].start, +b[j].start));
-      const e = new Date(Math.min(+a[i].end, +b[j].end));
-      if (s <= e) res.push({ start: s, end: e });
-      if (a[i].end < b[j].end) i++; else j++;
-    }
-    return res;
-  }
-
-  function findFullOverlaps(strategyLists, strategyNames) {
-    const N = strategyLists.length;
-    if (!strategyNames || strategyNames.length !== N) {
-      strategyNames = Array.from({ length: N }, (_, i) => `strategy_${i + 1}`);
-    }
-
-    const perStrategyMap = strategyLists.map(list => {
-      const map = new Map();
-      for (const rec of list) {
-        if (!map.has(rec.name)) map.set(rec.name, []);
-        map.get(rec.name).push({ buyDay: rec.buyDay, sellDay: rec.sellDay, rec });
-      }
-      for (const [nm, intervals] of map) {
-        map.set(nm, mergeIntervals(intervals));
-      }
-      return map;
-    });
-
-    const namesInAll = (() => {
-      const sets = perStrategyMap.map(m => new Set(m.keys()));
-      const base = sets[0];
-      const res = [];
-      for (const nm of base) {
-        if (sets.every(s => s.has(nm))) res.push(nm);
-      }
-      return res;
-    })();
-
-    const result = [];
-    for (const nm of namesInAll) {
-      let inter = perStrategyMap[0].get(nm);
-      for (let k = 1; k < N && inter.length > 0; k++) {
-        inter = intersectIntervalLists(inter, perStrategyMap[k].get(nm));
-      }
-      for (const seg of inter) {
-        // 這裡用「第一個策略裡的原始物件」當基底，只是多一個 overlapStrategies 欄位
-        const sample = strategyLists[0].find(r => r.name === nm);
-        result.push({
-          ...sample,
-          buyDay: fmt(seg.start),
-          sellDay: fmt(seg.end),
-          overlapStrategies: [...strategyNames]
-        });
-      }
-    }
-
-    return result;
-  }
-
-}
 // 多策略分析2 分析只重疊兩個策略
-const dataAnalysisMulti2 = () => {
+const dataAnalysisMulti = () => {
   console.log('fileNames.value', fileNames.value)
   returnCard.backtestType = '多策略分析2'
   const result = findNameAndBuyDayOverlaps(tableDataMulti.value, fileNames.value)
   console.log('result', result)
-  dataAnalysisSingle(result)
+  dataAnalysisSingle2(result)
   // 蒙地卡羅
   if (monteCarloTest.value) {
     runMonteCarlo(result, 100, 10000, stocksPerRound.value)
@@ -1330,6 +1255,120 @@ const buildChart7 = (data) => {
       { name: '交易筆數', type: 'bar', data: counts }
     ]
   })
+}
+
+// 統計持股分散度
+const buildChart8 = (repeat, noRepeat) => {
+  const data = Object.entries(repeat).map(([key, value]) => ({
+    name: key,
+    value: value
+  }))
+  const data2 = Object.entries(noRepeat).map(([key, value]) => ({
+    name: key,
+    value: value
+  }))
+
+  const chart = echarts.init(myChartDom8.value)
+
+  chart.setOption({
+    title: { text: '持股分散度' },
+    tooltip: {
+      trigger: 'axis',
+    },
+    legend: { data: ['可重複買入', '不可重複買入'] },
+    xAxis: {
+      type: 'category',
+      data: data.length > data2.length ? data.map(item => item.name) : data2.map(item => item.name),
+    },
+    yAxis: [
+      { type: 'value', name: '筆數' }
+    ],
+    series: [
+      { name: '可重複買入', type: 'bar', data: data.map(item => item.value) },
+      { name: '不可重複買入', type: 'bar', data: data2.map(item => item.value) }
+    ]
+  })
+}
+
+// 統計買入股票率與平均報酬
+const buildChart10 = (data) => {
+  const stockNameMap = {}
+  data.forEach(item => {
+    if (!stockNameMap[`${item.name} ${item.code}`]) {
+      stockNameMap[`${item.name} ${item.code}`] = {
+        count: 1,
+        data: [{
+          buy: item.buyDay,
+          sell: item.sellDay,
+          return: parseFloat(item.return)
+        }]
+      }
+    } else {
+      stockNameMap[`${item.name} ${item.code}`].count += 1
+      stockNameMap[`${item.name} ${item.code}`].data.push({
+        buy: item.buyDay,
+        sell: item.sellDay,
+        return: parseFloat(item.return)
+      })
+    }
+  })
+
+
+  const stockNameMapData = Object.entries(stockNameMap).map(([key, value]) => ({
+    name: key,
+    count: value.count,
+    return: value.data.reduce((a, b) => a + b.return * 100, 0) / value.data.length // 用 value 陣列去計算平均報酬率
+  }))
+  // const stockNameMapData2 = Object.entries(noRepeat).map(([key, value]) => ({
+  //   name: key,
+  //   count: value.count,
+  //   return: value.data.reduce((a, b) => a + b.return * 100, 0) / value.data.length // 用 value 陣列去計算平均報酬率
+  // }))
+  // console.log('stockNameMapData', stockNameMapData);
+  // console.log('stockNameMapData2', stockNameMapData2);
+  // console.log('stockNameMapData2', stockNameMapData2);
+
+  const chart = echarts.init(myChartDom9.value)
+  chart.setOption({
+    title: { text: '買入股票率與平均報酬' },
+    tooltip: {
+      trigger: 'axis',
+    },
+    legend: { data: ['買入股票次數', '平均報酬'] },
+    xAxis: {
+      type: 'category',
+      data: stockNameMapData.map(item => item.name),
+      axisLabel: { rotate: 45 }
+    },
+    yAxis: {
+      type: 'value',
+    },
+    series: [
+      { name: '買入股票次數', type: 'line', data: stockNameMapData.map(item => item.count) },
+      { name: '平均報酬', type: 'line', data: stockNameMapData.map(item => item.return) }
+    ]
+  })
+
+  // const chart2 = echarts.init(myChartDom10.value)
+  // chart2.setOption({
+  //   title: { text: '買入股票率與平均報酬' },
+  //   tooltip: {
+  //     trigger: 'axis',
+  //   },
+  //   legend: { data: ['買入股票次數', '平均報酬'] },
+  //   xAxis: {
+  //     type: 'category',
+  //     data: stockNameMapData2.map(item => item.name),
+  //     axisLabel: { rotate: 45 }
+  //   },
+  //   yAxis: {
+  //     type: 'value',
+  //   },
+  //   series: [
+  //     { name: '買入股票次數', type: 'bar', data: stockNameMapData2.map(item => item.count) },
+  //     { name: '平均報酬', type: 'line', data: stockNameMapData2.map(item => item.return) }
+  //   ]
+  // })
 }
 
 onMounted(() => {
