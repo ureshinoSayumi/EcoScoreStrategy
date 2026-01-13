@@ -129,6 +129,11 @@
         <div ref="myChartDom5" style="width: 1500px; height: 600px"></div>
       </div>
 
+      <!-- 買入標的每年滾動報酬 -->
+      <div style="width: 100%; overflow-x: scroll">
+        <div ref="myChartDom11" style="width: 1500px; height: 600px"></div>
+      </div>
+
       <!-- 每年報酬 -->
       <!-- 一年會單位統計滾動績效 -->
       <div style="width: 100%; overflow-x: scroll">
@@ -200,6 +205,7 @@ const myChartDom7 = ref() // 每半年報酬
 const myChartDom8 = ref() // 持股分散度
 const myChartDom9 = ref() // 買入股票與平均報酬率
 const myChartDom10 = ref() // 買入股票與平均報酬率比較
+const myChartDom11 = ref() // 買入標的每年滾動報酬
 
 // 參數設定
 const fileNames = ref([]) // 檔案名稱
@@ -411,6 +417,8 @@ const dataAnalysisSingle2 = (data) => {
     // buildChart7(noRepeatResult.history) // 資金 / 持倉成本 / 資產走勢圖
     buildChart8(returnCard.repeat.positionDistribution, returnCard.noRepeat.positionDistribution) // 持股分散度
     buildChart10(data) // 買入股票與平均報酬率
+    buildChart11(noRepeatResult.allBuyStocks) // 買入標的每年滾動報酬
+
   }
   // 蒙地卡羅模擬測試
   if (monteCarloTest.value) {
@@ -1319,14 +1327,7 @@ const buildChart10 = (data) => {
     count: value.count,
     return: value.data.reduce((a, b) => a + b.return * 100, 0) / value.data.length // 用 value 陣列去計算平均報酬率
   }))
-  // const stockNameMapData2 = Object.entries(noRepeat).map(([key, value]) => ({
-  //   name: key,
-  //   count: value.count,
-  //   return: value.data.reduce((a, b) => a + b.return * 100, 0) / value.data.length // 用 value 陣列去計算平均報酬率
-  // }))
-  // console.log('stockNameMapData', stockNameMapData);
-  // console.log('stockNameMapData2', stockNameMapData2);
-  // console.log('stockNameMapData2', stockNameMapData2);
+
 
   const chart = echarts.init(myChartDom9.value)
   chart.setOption({
@@ -1348,27 +1349,78 @@ const buildChart10 = (data) => {
       { name: '平均報酬', type: 'line', data: stockNameMapData.map(item => item.return) }
     ]
   })
+}
 
-  // const chart2 = echarts.init(myChartDom10.value)
-  // chart2.setOption({
-  //   title: { text: '買入股票率與平均報酬' },
-  //   tooltip: {
-  //     trigger: 'axis',
-  //   },
-  //   legend: { data: ['買入股票次數', '平均報酬'] },
-  //   xAxis: {
-  //     type: 'category',
-  //     data: stockNameMapData2.map(item => item.name),
-  //     axisLabel: { rotate: 45 }
-  //   },
-  //   yAxis: {
-  //     type: 'value',
-  //   },
-  //   series: [
-  //     { name: '買入股票次數', type: 'bar', data: stockNameMapData2.map(item => item.count) },
-  //     { name: '平均報酬', type: 'line', data: stockNameMapData2.map(item => item.return) }
-  //   ]
-  // })
+// 統計買入標的每年滾動報酬
+const buildChart11 = (data) => {
+  const yearlyStats = {}
+
+  data.forEach(item => {
+    const year = item.buyDay?.slice(0, 4)
+    const r = parseFloat(item.return)
+    if (!year || isNaN(r)) return
+
+    if (!yearlyStats[year]) yearlyStats[year] = []
+    yearlyStats[year].push(r * 100) // 換成百分比
+  })
+
+  const years = Object.keys(yearlyStats).sort()
+  const avgReturns = []
+  const medianReturns = []
+  const winRates = []
+  const counts = []
+
+  for (const year of years) {
+    const list = yearlyStats[year]
+    const n = list.length
+    const win = list.filter(r => r > 0).length
+
+    const avg = list.reduce((a, b) => a + b, 0) / n
+    const sorted = [...list].sort((a, b) => a - b)
+    const median = n % 2 === 1
+      ? sorted[Math.floor(n / 2)]
+      : (sorted[n / 2 - 1] + sorted[n / 2]) / 2
+    const winRate = (win / n) * 100
+
+    avgReturns.push(avg.toFixed(2))
+    medianReturns.push(median.toFixed(2))
+    winRates.push(winRate.toFixed(2))
+    counts.push(n)
+  }
+
+  const chart = echarts.init(myChartDom11.value)
+  chart.setOption({
+    title: { text: '買入標的每年交易統計' },
+    tooltip: {
+      trigger: 'axis',
+      formatter: function (params) {
+        const i = params[0].dataIndex
+        return `
+          年份：${years[i]}<br/>
+          筆數：${counts[i]}<br/>
+          平均報酬：${avgReturns[i]}%<br/>
+          中位報酬：${medianReturns[i]}%<br/>
+          勝率：${winRates[i]}%
+        `
+      }
+    },
+    legend: { data: ['平均報酬', '中位報酬', '勝率', '交易筆數'] },
+    xAxis: {
+      type: 'category',
+      data: years,
+      name: '年份',
+      axisLabel: { rotate: 0 }
+    },
+    yAxis: [
+      { type: 'value', name: '百分比 / 筆數' }
+    ],
+    series: [
+      { name: '平均報酬', type: 'line', data: avgReturns },
+      { name: '中位報酬', type: 'line', data: medianReturns },
+      { name: '勝率', type: 'line', data: winRates },
+      { name: '交易筆數', type: 'bar', data: counts }
+    ]
+  })
 }
 
 onMounted(() => {

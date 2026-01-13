@@ -348,6 +348,7 @@ export const calculateSimulationResult2 = (tradeLog, initialCapital = 10000, max
   let todayTradeLog = [] // 當天交易紀錄
   const positionsMap = {} // 持倉次數紀錄
   const stockNameMap = {} // 股票名稱紀錄
+  const allBuyStocks = [] // 所有買過的標的
 
   // 開始模擬歷史日期滾動
   history.forEach((item, index) => {
@@ -399,6 +400,7 @@ export const calculateSimulationResult2 = (tradeLog, initialCapital = 10000, max
               capitalUsed: capitalPerStock
             })
             rotations++ // 輪動次數
+            allBuyStocks.push(stock)
 
             // 記錄股票名稱
             if (!stockNameMap[`${stock.name} ${stock.code}`]) {
@@ -429,6 +431,7 @@ export const calculateSimulationResult2 = (tradeLog, initialCapital = 10000, max
                 capitalUsed: capitalPerStock
               })
               rotations++
+              allBuyStocks.push(stock)
 
               // 記錄股票名稱
               if (!stockNameMap[`${stock.name} ${stock.code}`]) {
@@ -564,7 +567,7 @@ export const calculateSimulationResult2 = (tradeLog, initialCapital = 10000, max
 
 
   console.log('history', history)
-
+  console.log('allBuyStocks', allBuyStocks)
   const finalReturn = ((capital / initialCapital - 1) * 100) // 計算總報酬
   const maxDrawdown = calculateMaxDrawdown(history) // 區間最大回徹
   const { mean, median, worst, best, annualReturnsLog } = calculateAnnualReturn(history) // 年度平均報酬率、年度中位數報酬率、最差年度報酬率、最佳年度報酬率、年度報酬率紀錄
@@ -587,5 +590,6 @@ export const calculateSimulationResult2 = (tradeLog, initialCapital = 10000, max
     history, // 歷史資料
     positionDistribution, // 持股分散度
     stockNameMap, // 股票名稱紀錄
+    allBuyStocks, // 所有買過的標的
   }
 }
