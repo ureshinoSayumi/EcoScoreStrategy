@@ -29,6 +29,7 @@
         </el-col>
       </el-row>
       <el-row :gutter="20">
+        <!-- SMA 策略 -->
         <el-col :span="6">
           <el-card shadow="hover" style="max-width: 480px">
             <el-space direction="vertical" alignment="flex-start">
@@ -48,6 +49,30 @@
             </template>
           </el-card>
         </el-col>
+
+
+        <!-- SMA QQQ 策略 -->
+        <el-col :span="6">
+          <el-card shadow="hover" style="max-width: 480px">
+            <el-space direction="vertical" alignment="flex-start">
+              <el-text>SMA QQQ: {{ SMA }}</el-text>
+              <el-text>總報酬: {{ smaQQQTotalReturn }}</el-text>
+              <el-text>區間最大回徹: {{ smaQQQMaxDrawdownValue }}％</el-text>
+              <el-text>年度平均報酬率: {{ smaQQQAnnualReturn }}％</el-text>
+              <el-text>年度中位數報酬率: {{ smaQQQMedianAnnualReturn }}％</el-text>
+              <el-text>最差年度報酬率: {{ smaQQQWorstAnnualReturn }}％</el-text>
+              <el-text>最佳年度報酬率: {{ smaQQQBestAnnualReturn }}％</el-text>
+              <el-text>交易筆數: {{ smaQQQRotationsNumber }}</el-text>
+            </el-space>
+            <template #footer>
+              <el-space direction="vertical" alignment="flex-start">
+                <el-text v-for="item in smaQQQAnnualReturnLog" :key="item.year">{{ item.year }} : {{ item.return }}％</el-text>
+              </el-space>
+            </template>
+          </el-card>
+        </el-col>
+
+        <!-- Buy & Hold 策略 -->
         <el-col :span="6">
           <el-card shadow="hover" style="max-width: 480px">
             <el-space direction="vertical" alignment="flex-start">
@@ -115,19 +140,19 @@ import { parseCSV } from '@/utils/csvReader';
 import * as echarts from 'echarts';
 import { onMounted, ref } from 'vue';
 
-
 const SMA = ref(200)
 const myChartDom = ref()
 const myChartDom2 = ref()
 const myChartDom3 = ref()
 const tableData = ref([]) // 交易資料
 const fileNames = ref([]) // 檔案名稱
+const qqqData = ref([]) // QQQ 資料
 
 const enterSensitive = ref(1) // 連續站上日
 const exitSensitive = ref(1) // 連續跌破日
 const buyBand = ref(0.00) // 買入band
 const sellBand = ref(0.00) // 賣出band
-const fee = ref(0.00) // 手續費
+const fee = ref(1.00) // 手續費
 
 // SMA 策略統計
 const smaTotalReturn = ref('') // 總報酬率
@@ -138,6 +163,16 @@ const smaWorstAnnualReturn = ref() // 最差年度報酬率
 const smaBestAnnualReturn = ref() // 最佳年度報酬率
 const smaAnnualReturnLog = ref([]) // 年度報酬率紀錄
 const smaRotationsNumber = ref() // 輪動次數
+
+// SMA QQQ 策略統計
+const smaQQQTotalReturn = ref('') // 總報酬率
+const smaQQQMaxDrawdownValue = ref() // 區間最大回徹
+const smaQQQAnnualReturn = ref(0) // 年度平均報酬率
+const smaQQQMedianAnnualReturn = ref() // 年度中位數報酬率
+const smaQQQWorstAnnualReturn = ref() // 最差年度報酬率
+const smaQQQBestAnnualReturn = ref() // 最佳年度報酬率
+const smaQQQAnnualReturnLog = ref([]) // 年度報酬率紀錄
+const smaQQQRotationsNumber = ref() // 輪動次數
 
 // Buy & Hold 策略
 const bhTotalReturn = ref('') // 總報酬率
@@ -163,7 +198,7 @@ const backtest = (
 ) =>  {
   const bh = backtestBuyAndHold(rawBars, initialCapital);
   const sma = backtestSMA(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee);
-
+  const smaQQQ = backtestSMAQQQ(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee, qqqData.value);
   /************************************************
    * 通用：績效統計
    ************************************************/
@@ -422,12 +457,179 @@ const backtest = (
     };
   }
 
+  /************************************************
+   * 策略2：SMA window 站上就持有QLD、跌破就改持有QQQ（輪動）
+   * - 跟原版一樣：用今天收盤決定明天持倉
+   * - 持有QLD => 吃QLD日報酬
+   * - 持有QQQ => 吃QQQ日報酬（用 qqqData.value 對齊同日期）
+   ************************************************/
+  function backtestSMAQQQ(
+    rawBars,
+    window = 200,
+    initialCapital = 1000000,
+    enterSensitive = 1,
+    exitSensitive = 1,
+    buyBand = 0.00,
+    sellBand = 0.00,
+    fee = 0.00,
+    qqqBarsRaw, // <<< 新增：請傳入 qqqData.value
+  ) {
+    const bars = [...rawBars]
+      .map(r => ({
+        date: new Date(r.Date),
+        date2: r.Date,
+        close: Number(r.Close),
+      }))
+      .sort((a, b) => a.date - b.date);
+
+    const n = bars.length;
+    if (n < window + 1) {
+      console.log(`資料太短，需要至少 ${window + 1} 根`);
+      return;
+    }
+
+    // --- 建 QQQ 日期 -> close 的 map，用來對齊同一天 ---
+    const qqqMap = new Map();
+    if (Array.isArray(qqqBarsRaw)) {
+      for (const r of qqqBarsRaw) {
+        // 用字串日期當 key（跟 rawBars 的 Date 格式一致即可）
+        qqqMap.set(r.Date, Number(r.Close));
+      }
+    } else {
+      console.warn("你沒有傳入 qqqBarsRaw（qqqData.value），QQQ 報酬會變成 0（等同現金）");
+    }
+
+    // 取 QQQ 某天 close；沒有就回傳 null
+    const getQQQClose = (date2) => {
+      const v = qqqMap.get(date2);
+      return Number.isFinite(v) ? v : null;
+    };
+
+    // 計算 SMA
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      sum += bars[i].close;
+      if (i >= window) sum -= bars[i - window].close;
+      bars[i].sma = i >= window - 1 ? sum / window : null;
+    }
+
+    // 回測
+    let equity = initialCapital;
+    let holding = "CASH"; // "QLD" | "QQQ" | "CASH"
+    const equityCurve = [];
+    const rets = [];
+    let tradeCount = 0;
+
+    let aboveCount = 0;
+    let belowCount = 0;
+
+    // 為了算 QQQ ret，需要「前一日 QQQ close」
+    let prevQQQClose = null;
+
+    for (let i = 0; i < n; i++) {
+      const bar = bars[i];
+      const prev = i > 0 ? bars[i - 1] : null;
+
+      // --- QLD 今日報酬 ---
+      let qldRet = 0;
+      if (prev) qldRet = bar.close / prev.close - 1;
+
+      // --- QQQ 今日報酬（依同日期對齊）---
+      const qqqCloseToday = getQQQClose(bar.date2);
+      let qqqRet = 0;
+
+      if (qqqCloseToday != null && prevQQQClose != null) {
+        qqqRet = qqqCloseToday / prevQQQClose - 1;
+      } else {
+        // 1) 若資料缺漏，該日視為 0 報酬（等同現金）
+        // 2) 你也可以改成：缺漏就強制 holding="CASH"
+        qqqRet = 0;
+      }
+
+      // 更新 prevQQQClose（只有今天有值才更新，避免一直被 null 覆蓋）
+      if (qqqCloseToday != null) prevQQQClose = qqqCloseToday;
+
+      // --- 用昨天的 holding 吃今天的報酬 ---
+      let usedRet = 0;
+      if (holding === "QLD") usedRet = qldRet;
+      else if (holding === "QQQ") usedRet = qqqRet;
+      else usedRet = 0;
+
+      equity *= (1 + usedRet);
+
+      equityCurve.push({
+        date: bar.date,
+        date2: bar.date2,
+        equity,
+        holding,
+      });
+
+      rets.push(usedRet);
+
+      // --- 用今天收盤決定「明天」要持有誰（輪動規則） ---
+      const sma = bar.sma;
+      let nextHolding = holding;
+
+      if (sma === null) {
+        aboveCount = 0; // 連續站上計數
+        belowCount = 0; // 連續跌破計數
+        // SMA 不可用：維持 CASH（你也可以改成固定持 QQQ）
+        nextHolding = "CASH";
+      } else {
+        // 與 SMA 的相對偏離比例，例如 0.03 代表高於 3%
+        const relDiff = (bar.close - sma) / sma;
+
+        if (relDiff > (buyBand / 100)) {
+          aboveCount++;
+          belowCount = 0;
+        } else if (relDiff < -(sellBand / 100)) {
+          belowCount++;
+          aboveCount = 0;
+        } else {
+          aboveCount = 0;
+          belowCount = 0;
+        }
+
+        // 規則：
+        // - 若目前持 QLD：連續跌破 exitSensitive => 明天改持 QQQ
+        // - 若目前非 QLD（QQQ or CASH）：連續站上 enterSensitive => 明天改持 QLD
+        if (holding === "QLD") {
+          if (belowCount >= exitSensitive) nextHolding = "QQQ";
+        } else {
+          if (aboveCount >= enterSensitive) nextHolding = "QLD";
+          else {
+            // 沒達到進場條件：如果你希望「平常都持 QQQ」，那就維持 QQQ
+            // 若你希望「平常現金」，改成 nextHolding="CASH"
+            nextHolding = holding === "CASH" ? "CASH" : "QQQ";
+          }
+        }
+      }
+
+      // --- 換倉扣手續費（每次換倉扣一次）---
+      if (nextHolding !== holding) {
+        tradeCount++;
+        equity *= 1 - ((fee / 100) * 2);
+      }
+
+      holding = nextHolding;
+    }
+
+    return {
+      equityCurve,
+      stats: calcStats(equityCurve, rets),
+      tradeCount,
+    };
+  }
+
   return {
     buyAndHold: bh.stats,
     smaStrategy: sma.stats,
+    smaQQQStrategy: smaQQQ.stats,
     tradeCount: sma.tradeCount,
+    tradeCountQQQ: smaQQQ.tradeCount,
     bhCurve: bh.equityCurve,
     smaCurve: sma.equityCurve,
+    smaQQQCurve: smaQQQ.equityCurve,
   };
 }
 
@@ -449,7 +651,7 @@ const testSMA200 = async (event) => {
   // sellBand.value: 跌破SMA200% band
   // fee.value: 手續費
   backtestSMA200(data);
-  test(data, SMA.value)
+  buildChart3(data, SMA.value)
 
 }
 
@@ -462,6 +664,7 @@ const backtestSMA200 = (data) => {
   console.log("交易次數：", result.tradeCount);
   console.log("bhCurve", result.bhCurve);
   console.log("smaCurve", result.smaCurve);
+  console.log("smaQQQCurve", result.smaQQQCurve);
 
   // SMA 策略
   smaTotalReturn.value = result.smaStrategy.totalReturnPercent; // 總報酬率
@@ -473,6 +676,16 @@ const backtestSMA200 = (data) => {
   smaBestAnnualReturn.value = result.smaStrategy.annualReturns.reduce((max, item) => item.return > max ? item.return : max, 0); // 最佳年度報酬率
   smaMedianAnnualReturn.value = result.smaStrategy.annualReturns.reduce((median, item) => { return median + item.return }, 0) / result.smaStrategy.annualReturns.length; // 年度中位數報酬率
 
+  // SMA QQQ 策略
+  smaQQQTotalReturn.value = result.smaQQQStrategy.totalReturnPercent; // 總報酬率
+  smaQQQMaxDrawdownValue.value = result.smaQQQStrategy.maxDrawdown; // 區間最大回徹
+  smaQQQAnnualReturn.value = result.smaQQQStrategy.cagr; // 年度平均報酬率
+  smaQQQAnnualReturnLog.value = result.smaQQQStrategy.annualReturns; // 年度報酬率紀錄
+  smaQQQRotationsNumber.value = result.tradeCountQQQ; // 輪動次數
+  smaQQQWorstAnnualReturn.value = result.smaQQQStrategy.annualReturns.reduce((min, item) => item.return < min ? item.return : min, 0); // 最差年度報酬率
+  smaQQQBestAnnualReturn.value = result.smaQQQStrategy.annualReturns.reduce((max, item) => item.return > max ? item.return : max, 0); // 最佳年度報酬率
+  smaQQQMedianAnnualReturn.value = result.smaQQQStrategy.annualReturns.reduce((median, item) => { return median + item.return }, 0) / result.smaQQQStrategy.annualReturns.length; // 年度中位數報酬率
+
   // Buy & Hold 策略
   bhTotalReturn.value = result.buyAndHold.totalReturnPercent; // 總報酬率
   bhMaxDrawdownValue.value = result.buyAndHold.maxDrawdown; // 區間最大回徹
@@ -483,10 +696,11 @@ const backtestSMA200 = (data) => {
   bhMedianAnnualReturn.value = result.buyAndHold.annualReturns.reduce((median, item) => { return median + item.return }, 0) / result.buyAndHold.annualReturns.length; // 年度中位數報酬率
 
   // 輸出圖表
-  buildChart(result.bhCurve, result.smaCurve);
+  buildChart(result.bhCurve, result.smaCurve, result.smaQQQCurve);
 }
 
-const test = (data, window) => {
+// 計算與200SMA的區間距離
+const buildChart3 = (data, window) => {
    const bars = [...data]
       .map(r => ({
         date: new Date(r.Date),
@@ -494,8 +708,8 @@ const test = (data, window) => {
         close: Number(r.Close),
       }))
       .sort((a, b) => a.date - b.date);
-   // 計算 SMA
 
+   // 計算 SMA
   let sum = 0;
   for (let i = 0; i < bars.length; i++) {
     sum += bars[i].close;
@@ -528,23 +742,20 @@ const test = (data, window) => {
 
   const chart = echarts.init(myChartDom3.value)
   chart.setOption({
-    title: { text: '報酬率分布圖' },
+    title: { text: '股價與200SMA的區間距離' },
     tooltip: { trigger: 'item' },
     xAxis: {
       type: 'category',
-      name: '報酬區間',
+      name: '區間距離',
       data: histogramData.map(h => h.value),
       axisLabel: { rotate: 45 }
     },
     yAxis: { type: 'value', name: '筆數' },
     series: [{ type: 'bar', data: histogramData.map(h => h.count), name: '出現次數' }]
   })
-
-
-
 }
 
-const buildChart = (bhCurve, smaCurve) => {
+const buildChart = (bhCurve, smaCurve, smaQQQCurve) => {
   // 輸出圖表
   // 計算 netAsset（市值 = 現金 + 成本，這裡.value)
   const chart = echarts.init(myChartDom.value)
@@ -557,15 +768,17 @@ const buildChart = (bhCurve, smaCurve) => {
         const i = params[0].dataIndex
         const d = bhCurve[i]
         const s = smaCurve[i]
+        const q = smaQQQCurve[i]
         return `
           日期：${d.date2}<br/>
           單筆持有：$${d.equity}<br/>
           200 SMA：$${s.equity}<br/>
+          QQQ：$${q.equity}<br/>
         `
       }
     },
     legend: {
-      data: ['單筆持有', '200 SMA']
+      data: ['單筆持有', '200 SMA', 'SMAQQQ']
     },
     xAxis: {
       type: 'category',
@@ -586,6 +799,11 @@ const buildChart = (bhCurve, smaCurve) => {
         name: '200 SMA',
         type: 'line',
         data: smaCurve.map(h => parseFloat(h.equity))
+      },
+      {
+        name: 'SMAQQQ',
+        type: 'line',
+        data: smaQQQCurve.map(h => parseFloat(h.equity))
       }
     ]
   })
@@ -876,8 +1094,12 @@ const monteCarloSimulation = () => {
 }
 
 
-onMounted(() => {
-  // buildECharts()
+onMounted(async () => {
+  const res = await fetch('/qqq.csv')
+  const csvText = await res.text()
+  const data = await parseCSV(csvText)
+  qqqData.value = data
+  console.log('qqqData', qqqData.value)
 })
 </script>
 <style scoped>
