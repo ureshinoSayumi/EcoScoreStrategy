@@ -51,13 +51,13 @@
                 <el-text>最差年度報酬率: {{ returnCard.repeat.worstAnnualReturn }}％</el-text>
                 <el-text>最佳年度報酬率: {{ returnCard.repeat.bestAnnualReturn }}％</el-text>
                 <el-text>輪動次數: {{ returnCard.repeat.rotationsNumber }}</el-text>
-                <el-text v-for="item in returnCard.repeat.annualReturnLog" :key="item.year">{{ item.year }} : {{ item.return }}％</el-text>
+                <el-text v-for="item in returnCard.repeat.annualReturnLog" :key="item.year">{{ item.year }} : {{ item.return.toFixed(2) }}％</el-text>
               </el-space>
             </template>
           </el-card>
         </el-col>
         <el-col :span="6">
-          <el-card shadow="hover" style="max-width: 480px">
+          <el-card shadow="hover" style="max-width: 580px">
             <el-space direction="vertical" alignment="flex-start">
               <el-text>回測方式: {{ returnCard.backtestType }}、不重複進場</el-text>
               <el-text>平均報酬: {{ returnCard.averageReturn }}％</el-text>
@@ -77,7 +77,10 @@
                 <el-text>最差年度報酬率: {{ returnCard.noRepeat.worstAnnualReturn }}％</el-text>
                 <el-text>最佳年度報酬率: {{ returnCard.noRepeat.bestAnnualReturn }}％</el-text>
                 <el-text>輪動次數: {{ returnCard.noRepeat.rotationsNumber }}</el-text>
-                <el-text v-for="item in returnCard.noRepeat.annualReturnLog" :key="item.year">{{ item.year }} : {{ item.return }}％</el-text>
+                <el-text>平/中/勝/數 ：</el-text>
+                <el-text v-for="item in returnCard.noRepeat.annualReturnLog" :key="item.year">
+                  {{ item.year }} : {{ item.return.toFixed(2) }}％ / {{ item.avgReturns }}% / {{ item.medianReturns }}％ / {{ item.winRates }}％ / {{ item.counts }}筆
+                </el-text>
               </el-space>
             </template>
           </el-card>
@@ -1149,6 +1152,15 @@ const buildChart3 = (data) => {
     medianReturns.push(median.toFixed(2))
     winRates.push(winRate.toFixed(2))
     counts.push(n)
+    returnCard.noRepeat.annualReturnLog.forEach((item) => {
+      if (item.year === year) {
+        item.avgReturns = avg.toFixed(2)
+        item.medianReturns = median.toFixed(2)
+        item.winRates = winRate.toFixed(2)
+        item.counts = n
+      }
+    })
+
   }
 
   const chart = echarts.init(myChartDom3.value)

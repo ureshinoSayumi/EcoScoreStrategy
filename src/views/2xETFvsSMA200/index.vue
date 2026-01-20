@@ -197,7 +197,9 @@ const backtest = (
   fee = 0.00,
 ) =>  {
   const bh = backtestBuyAndHold(rawBars, initialCapital);
-  const sma = backtestSMA(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee);
+  // const sma = backtestSMA(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee);
+  const sma = backtestSMAQQQ(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee);
+
   const smaQQQ = backtestSMAQQQ(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee, qqqData.value);
   /************************************************
    * 通用：績效統計
@@ -312,157 +314,12 @@ const backtest = (
 
 
   /************************************************
-   * 策略2：SMA window 站上就持有、跌破就空手
-   * 參數
-   * - rawBars: 原始資料
-   * - window: SMA窗口
-   * - initialCapital: 初始資金
-   * - enterSensitive: 連續站上日
-   * - exitSensitive: 連續跌破日
-   * - buyBand: 站上SMA200% band
-   * - sellBand: 跌破SMA200% band
-   * - fee: 手續費
-   * 回傳值
-   * - equityCurve: 資金曲線
-   * - stats: 績效統計
-   * - tradeCount: 交易次數
-   ************************************************/
-  function backtestSMA(
-    rawBars,
-    window = 200,
-    initialCapital = 1000000,
-    enterSensitive = 1,
-    exitSensitive = 1,
-    buyBand = 0.00,
-    sellBand = 0.00,
-    fee = 0.00,
-  ) {
-    const bars = [...rawBars]
-      .map(r => ({
-        date: new Date(r.Date),
-        date2: r.Date,
-        close: Number(r.Close),
-      }))
-      .sort((a, b) => a.date - b.date);
-
-    const n = bars.length;
-    if (n < window + 1) {
-      console.log(`資料太短，需要至少 ${window + 1} 根`);
-      return;
-    }
-
-    // 計算 SMA
-    let sum = 0;
-    for (let i = 0; i < n; i++) {
-      sum += bars[i].close;
-      if (i >= window) sum -= bars[i - window].close;
-      bars[i].sma = i >= window - 1 ? sum / window : null;
-    }
-    console.log('bars', bars);
-
-    // 回測
-    let equity = initialCapital;
-    let position = 0; // 0: 空手 1: 持有
-    const equityCurve = [];
-    const rets = [];
-    let tradeCount = 0;
-
-    let aboveCount = 0; // 連續站上計數
-    let belowCount = 0; // 連續跌破計數
-
-    let retLog = 0
-    for (let i = 0; i < n; i++) {
-      const bar = bars[i];
-      const prev = i > 0 ? bars[i - 1] : null;
-
-      // 今日報酬（昨收 → 今收）
-      let ret = 0;
-      if (prev) ret = bar.close / prev.close - 1;
-
-      retLog = ret;
-
-      // 用昨天的 position 吃今天的報酬
-      equity *= (1 + ret * position);
-
-      equityCurve.push({
-        date: bar.date,
-        date2: bar.date2,
-        equity,
-        position,
-      });
-
-      rets.push(ret * position);
-
-      // 用今天收盤決定「明天」持倉
-      const sma = bar.sma;
-      let nextPos = position;
-
-      if (sma === null) {
-        aboveCount = 0;
-        nextPos = 0; // 一定空手
-      } else {
-        // 更新連續站上 / 跌破計數
-        // 與 SMA 的相對偏離比例，例如 0.03 代表高於 3%
-        const relDiff = (bar.close - sma) / sma;
-
-        if (relDiff > (buyBand / 100)) {
-          aboveCount++;
-          belowCount = 0;
-        } else if (relDiff < -(sellBand / 100)) {
-          belowCount++;
-          aboveCount = 0;
-        } else {
-          // 嚴格相等時兩邊都歸零（你也可以改成站上不歸零，看你策略定義）
-          aboveCount = 0;
-          belowCount = 0;
-        }
-
-        if (position === 1) {
-          // 已持有：連續跌破 exitSensitive 天才出場
-          if (belowCount >= exitSensitive) {
-            nextPos = 0;
-          }
-        } else {
-          // 原本沒持股：連續站上 enterSensitive 天才進場
-          if (aboveCount >= enterSensitive) {
-            nextPos = 1;
-          }
-        }
-
-        // 補充：如果非滿足 entry，持續持有 aboveCount，但不進場
-        if (position === 0 && aboveCount < enterSensitive) {
-          nextPos = 0;
-        }
-      }
-
-      // 每次交易產生時，報酬扣掉0.3％手續費
-      if (nextPos !== position) {
-        tradeCount++;
-        console.log("bar.date2", {
-          date: bar.date,
-          date2: bar.date2,
-          equity,
-          position,
-        });
-        equity *= 1 - (fee / 100); // 扣掉手續費
-      }
-
-      position = nextPos;
-    }
-
-    return {
-      equityCurve,
-      stats: calcStats(equityCurve, rets),
-      tradeCount,
-    };
-  }
-
-  /************************************************
    * 策略2：SMA window 站上就持有QLD、跌破就改持有QQQ（輪動）
    * - 跟原版一樣：用今天收盤決定明天持倉
    * - 持有QLD => 吃QLD日報酬
    * - 持有QQQ => 吃QQQ日報酬（用 qqqData.value 對齊同日期）
    ************************************************/
+
   function backtestSMAQQQ(
     rawBars,
     window = 200,
@@ -472,13 +329,18 @@ const backtest = (
     buyBand = 0.00,
     sellBand = 0.00,
     fee = 0.00,
-    qqqBarsRaw, // <<< 新增：請傳入 qqqData.value
+    qqqBarsRaw = [], // <<< 新增：請傳入 qqqData.value
   ) {
+    // --- QLD bars（需要 Close/High/Low）---
+    let tradeDays = []
     const bars = [...rawBars]
       .map(r => ({
         date: new Date(r.Date),
         date2: r.Date,
         close: Number(r.Close),
+        high: Number(r.High ?? r.Close),
+        low: Number(r.Low ?? r.Close),
+        open: Number(r.Open ?? r.Close),
       }))
       .sort((a, b) => a.date - b.date);
 
@@ -488,24 +350,31 @@ const backtest = (
       return;
     }
 
-    // --- 建 QQQ 日期 -> close 的 map，用來對齊同一天 ---
+    // --- QQQ map：date2 -> {close, high, low} ---
     const qqqMap = new Map();
     if (Array.isArray(qqqBarsRaw)) {
       for (const r of qqqBarsRaw) {
-        // 用字串日期當 key（跟 rawBars 的 Date 格式一致即可）
-        qqqMap.set(r.Date, Number(r.Close));
+        qqqMap.set(r.Date, {
+          close: Number(r.Close),
+          high: Number(r.High ?? r.Close),
+          low: Number(r.Low ?? r.Close),
+          open: Number(r.Open ?? r.Close),
+        });
       }
     } else {
-      console.warn("你沒有傳入 qqqBarsRaw（qqqData.value），QQQ 報酬會變成 0（等同現金）");
+      console.warn("你沒有傳入 qqqBarsRaw（qqqData.value），QQQ 報酬會視為 0，且無法做 High/Low 成交懲罰");
     }
 
-    // 取 QQQ 某天 close；沒有就回傳 null
-    const getQQQClose = (date2) => {
-      const v = qqqMap.get(date2);
-      return Number.isFinite(v) ? v : null;
-    };
+    const getQQQBar = (date2) => qqqMap.get(date2) ?? null;
 
-    // 計算 SMA
+    // 取某資產在當天的 close/high/low；缺資料就用 close 代替
+    function getAssetBar(asset, qldBar /* bars[i] */, date2) {
+      if (asset === "QLD") return qldBar;
+      if (asset === "QQQ") return getQQQBar(date2);
+      return null; // CASH
+    }
+
+    // --- SMA ---
     let sum = 0;
     for (let i = 0; i < n; i++) {
       sum += bars[i].close;
@@ -513,7 +382,7 @@ const backtest = (
       bars[i].sma = i >= window - 1 ? sum / window : null;
     }
 
-    // 回測
+    // --- 回測 ---
     let equity = initialCapital;
     let holding = "CASH"; // "QLD" | "QQQ" | "CASH"
     const equityCurve = [];
@@ -523,33 +392,32 @@ const backtest = (
     let aboveCount = 0;
     let belowCount = 0;
 
-    // 為了算 QQQ ret，需要「前一日 QQQ close」
+    // 算 QQQ close-to-close ret 用
     let prevQQQClose = null;
 
     for (let i = 0; i < n; i++) {
       const bar = bars[i];
       const prev = i > 0 ? bars[i - 1] : null;
 
-      // --- QLD 今日報酬 ---
+      // --- QLD ret ---
       let qldRet = 0;
       if (prev) qldRet = bar.close / prev.close - 1;
 
-      // --- QQQ 今日報酬（依同日期對齊）---
-      const qqqCloseToday = getQQQClose(bar.date2);
+      // --- QQQ ret（同日期對齊）---
+      const qqqBarToday = getQQQBar(bar.date2);
       let qqqRet = 0;
 
-      if (qqqCloseToday != null && prevQQQClose != null) {
-        qqqRet = qqqCloseToday / prevQQQClose - 1;
+      if (qqqBarToday && prevQQQClose != null) {
+        qqqRet = qqqBarToday.close / prevQQQClose - 1;
       } else {
-        // 1) 若資料缺漏，該日視為 0 報酬（等同現金）
-        // 2) 你也可以改成：缺漏就強制 holding="CASH"
         qqqRet = 0;
       }
 
-      // 更新 prevQQQClose（只有今天有值才更新，避免一直被 null 覆蓋）
-      if (qqqCloseToday != null) prevQQQClose = qqqCloseToday;
+      if (qqqBarToday && Number.isFinite(qqqBarToday.close)) {
+        prevQQQClose = qqqBarToday.close;
+      }
 
-      // --- 用昨天的 holding 吃今天的報酬 ---
+      // --- 用昨天的 holding 吃今天 close-to-close 報酬 ---
       let usedRet = 0;
       if (holding === "QLD") usedRet = qldRet;
       else if (holding === "QQQ") usedRet = qqqRet;
@@ -563,20 +431,17 @@ const backtest = (
         equity,
         holding,
       });
-
       rets.push(usedRet);
 
-      // --- 用今天收盤決定「明天」要持有誰（輪動規則） ---
+      // --- 用今天收盤決定明天持倉 ---
       const sma = bar.sma;
       let nextHolding = holding;
 
       if (sma === null) {
-        aboveCount = 0; // 連續站上計數
-        belowCount = 0; // 連續跌破計數
-        // SMA 不可用：維持 CASH（你也可以改成固定持 QQQ）
+        aboveCount = 0;
+        belowCount = 0;
         nextHolding = "CASH";
       } else {
-        // 與 SMA 的相對偏離比例，例如 0.03 代表高於 3%
         const relDiff = (bar.close - sma) / sma;
 
         if (relDiff > (buyBand / 100)) {
@@ -590,37 +455,70 @@ const backtest = (
           belowCount = 0;
         }
 
-        // 規則：
-        // - 若目前持 QLD：連續跌破 exitSensitive => 明天改持 QQQ
-        // - 若目前非 QLD（QQQ or CASH）：連續站上 enterSensitive => 明天改持 QLD
         if (holding === "QLD") {
           if (belowCount >= exitSensitive) nextHolding = "QQQ";
         } else {
           if (aboveCount >= enterSensitive) nextHolding = "QLD";
-          else {
-            // 沒達到進場條件：如果你希望「平常都持 QQQ」，那就維持 QQQ
-            // 若你希望「平常現金」，改成 nextHolding="CASH"
-            nextHolding = holding === "CASH" ? "CASH" : "QQQ";
-          }
+          else nextHolding = holding === "CASH" ? "CASH" : "QQQ";
         }
       }
 
-      // --- 換倉扣手續費（每次換倉扣一次）---
+      // --- 換倉：賣用當日 Low、買用當日 High（極端懲罰）---
       if (nextHolding !== holding) {
         tradeCount++;
-        equity *= 1 - ((fee / 100) * 2);
+        tradeDays.push({
+          // date: bar.date,
+          date2: bar.date2,
+          holding,
+          nextHolding,
+          equity,
+          ...bar
+        });
+
+        // 1) 先把舊倉「以 close 計價」轉成「以 Low 賣出」
+        if (holding !== "CASH") {
+          const sellBar = getAssetBar(holding, bar, bar.date2);
+          const sellClose = sellBar?.close;
+          // const sellLow = sellBar?.low;
+          const sellLow = sellBar?.close;
+
+          if (Number.isFinite(sellClose) && Number.isFinite(sellLow) && sellClose > 0) {
+            // 把「以 Close 計價的資產」調整成「以 Low 賣出的實際成交結果」Z
+            equity *= (sellLow / sellClose);
+          } else {
+            // 缺資料就不懲罰（或你想更保守也可以直接當作 0.99 之類）
+          }
+        }
+
+        // 2) 再把新倉「以 High 買入」但「用 close 計價」開始持有
+        if (nextHolding !== "CASH") {
+          const buyBar = getAssetBar(nextHolding, bar, bar.date2);
+          const buyClose = buyBar?.close;
+          // const buyHigh = buyBar?.high;
+          const buyHigh = buyBar?.open;
+
+          if (Number.isFinite(buyClose) && Number.isFinite(buyHigh) && buyHigh > 0) {
+            equity *= (buyClose / buyHigh);
+          } else {
+            // 缺資料就不懲罰
+          }
+        }
+
+        // 3) 扣手續費（你原本是每次換倉扣一次）
+        // equity *= 1 - (fee / 100);
       }
 
       holding = nextHolding;
     }
 
+    console.log("tradeDays", tradeDays);
+    backtestSMA200OpenClose(tradeDays);
     return {
       equityCurve,
       stats: calcStats(equityCurve, rets),
       tradeCount,
     };
   }
-
   return {
     buyAndHold: bh.stats,
     smaStrategy: sma.stats,
@@ -641,6 +539,7 @@ const testSMA200 = async (event) => {
   }
   const data = await parseCSV(file);
   console.log('CSV資料:', data);
+  backtestSMA200OpenClose(data);
 
   // data: 原始資料
   // 1000000: 初始資金
@@ -718,7 +617,6 @@ const buildChart3 = (data, window) => {
     bars[i].diffPercent = ((bars[i].close - bars[i].sma) / bars[i].sma) * 100;
 
   }
-  console.log('testbars', bars);
 
   const distribution = bars.reduce((acc, item) => {
   if (item.diffPercent == null || item.diffPercent === Infinity ) return acc;
@@ -729,7 +627,6 @@ const buildChart3 = (data, window) => {
     return acc;
   }, {});
 
-  console.log(distribution);
 
   const histogramData = Object.entries(distribution)
   .map(([value, count]) => ({
@@ -738,7 +635,6 @@ const buildChart3 = (data, window) => {
   }))
   .sort((a, b) => a.value - b.value);
 
-  console.log('histogramData', histogramData);
 
   const chart = echarts.init(myChartDom3.value)
   chart.setOption({
@@ -809,46 +705,123 @@ const buildChart = (bhCurve, smaCurve, smaQQQCurve) => {
   })
 }
 
-const buildChart2 = (bhCurve) => {
-  // 輸出圖表
-  // 計算 netAsset（市值 = 現金 + 成本，這裡.value)
-  const chart = echarts.init(myChartDom2.value)
+// 回測驗證在200SMA上下開盤、收盤
+const backtestSMA200OpenClose = (data) => {
 
-  chart.setOption({
-    title: { text: '資金 / 持倉成本 / 資產走勢圖' },
-    tooltip: {
-      trigger: 'axis',
-      formatter: (params) => {
-        const i = params[0].dataIndex
-        const d = bhCurve[i]
-        return `
-          日期：${d.Date}<br/>
-          股價：${d.Close}<br/>
-        `
+  function analyzeOpenClose(bars) {
+    const diffs = [];          // signed diff: (Close-Open)/Open
+    const closeWins = [];      // diff > 0
+    const openWins = [];       // -diff where diff < 0 (Open higher by % of Open)
+    let ties = 0;
+    let skipped = 0;
+
+    for (const r of bars) {
+      const open = Number(r.open) || Number(r.Open);
+      const close = Number(r.close) || Number(r.Close);
+
+      if (!Number.isFinite(open) || !Number.isFinite(close) || open <= 0) {
+        skipped++;
+        continue;
       }
-    },
-    legend: {
-      data: ['股價']
-    },
-    xAxis: {
-      type: 'category',
-      data: bhCurve.map(h => h.Date),
-      axisLabel: { rotate: 45 }
-    },
-    yAxis: {
-      type: 'value',
-      name: '金額（元）'
-    },
-    series: [
-      {
-        name: '股價',
-        type: 'line',
-        data: bhCurve.map(h => parseFloat(h.Close))
-      },
-    ]
-  })
-}
 
+      const diff = (close - open) / open; // signed
+      diffs.push(diff);
+
+      if (diff > 0) closeWins.push(diff);
+      else if (diff < 0) openWins.push(-diff);
+      else ties++;
+    }
+
+    const n = diffs.length;
+    if (n === 0) {
+      return { error: "沒有可用資料（Open/Close 需為數字且 Open > 0）", skipped };
+    }
+
+    const mean = (arr) => arr.reduce((a, b) => a + b, 0) / (arr.length || 1);
+
+    const median = (arr) => {
+      if (arr.length === 0) return 0;
+      const s = [...arr].sort((a, b) => a - b);
+      const m = Math.floor(s.length / 2);
+      return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+    };
+
+    const pct = (x, digits = 4) => `${(x * 100).toFixed(digits)}%`;
+
+    return {
+      sampleSize: n,
+      skipped,
+      ties,
+
+      closeWinCount: closeWins.length,
+      openWinCount: openWins.length,
+
+      closeHigherWinRate: closeWins.length / n,
+      openHigherWinRate: openWins.length / n,
+      tieRate: ties / n,
+
+      avgSignedDiff: mean(diffs),
+      medianSignedDiff: median(diffs),
+
+      closeWin_avgHigher: mean(closeWins),
+      closeWin_medianHigher: median(closeWins),
+
+      openWin_avgHigher: mean(openWins),
+      openWin_medianHigher: median(openWins),
+
+      // formatter
+      _fmt: { pct },
+    };
+  }
+
+
+  function printOpenCloseReport(bars, label = "Open vs Close 分析") {
+    const res = analyzeOpenClose(bars);
+
+    if (res.error) {
+      console.log(`❌ ${label}`);
+      console.log(res);
+      return;
+    }
+
+    const pct = res._fmt.pct;
+
+    console.log("==================================================");
+    console.log(`📊 ${label}`);
+    console.log("==================================================");
+    console.log(`樣本數: ${res.sampleSize} 天`);
+    if (res.skipped) console.log(`跳過資料: ${res.skipped} 筆（Open/Close 不合法）`);
+    console.log("");
+
+    console.log("【勝率統計】");
+    console.log(`收盤 > 開盤: ${res.closeWinCount} 天  (${pct(res.closeHigherWinRate, 2)})`);
+    console.log(`開盤 > 收盤: ${res.openWinCount} 天  (${pct(res.openHigherWinRate, 2)})`);
+    console.log(`平手(收盤=開盤): ${res.ties} 天 (${pct(res.tieRate, 2)})`);
+    console.log("");
+
+    console.log("【整體差異（以開盤為基準，(Close-Open)/Open）】");
+    console.log(`平均差異: ${pct(res.avgSignedDiff, 4)}   （正=收盤較高，負=開盤較高）`);
+    console.log(`中位數差異: ${pct(res.medianSignedDiff, 4)}`);
+    console.log("");
+
+    console.log("【收盤贏的日子（收盤比開盤高幾%）】");
+    console.log(`平均贏幅: ${pct(res.closeWin_avgHigher, 4)}`);
+    console.log(`中位數贏幅: ${pct(res.closeWin_medianHigher, 4)}`);
+    console.log("");
+
+    console.log("【開盤贏的日子（開盤比收盤高幾%）】");
+    console.log(`平均贏幅: ${pct(res.openWin_avgHigher, 4)}`);
+    console.log(`中位數贏幅: ${pct(res.openWin_medianHigher, 4)}`);
+    console.log("");
+
+    console.log("==================================================\n");
+  }
+
+
+  // ✅ 用法：把你的資料陣列丟進去
+  printOpenCloseReport(data, "QQQ 開盤/收盤誰比較高？");
+
+}
 // 蒙地卡羅模擬
 const monteCarloSimulation = () => {
   // 參數設定
