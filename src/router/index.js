@@ -27,6 +27,12 @@ const router = createRouter({
       name: 'recordAnalysis',
       component: () => import('@/views/RecordAnalysis/index.vue'),
     },
+    // 最佳化指數
+    {
+      path: '/optimizedIndex',
+      name: 'optimizedIndex',
+      component: () => import('@/views/RecordAnalysis/OptimizedIndex.vue'),
+    },
     // 2倍作多槓桿型ETF，單筆買入 VS SMA200 策略
     {
       path: '/2xETFvsSMA200',

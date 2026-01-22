@@ -5,7 +5,7 @@ export const runMonteCarlo = (data, iterations = 1000, initialCapital = 10000, p
 
   for (let i = 0; i < iterations; i++) {
     const shuffledData = shuffleReturns(data)
-    const result = calculateSimulationResult(shuffledData, initialCapital, positions)
+    const result = calculateSimulationResult2(shuffledData, initialCapital, positions)
     returns.push(result.finalReturn)
     drawdowns.push(result.maxDrawdown)
   }
@@ -567,7 +567,6 @@ export const calculateSimulationResult2 = (tradeLog, initialCapital = 10000, max
 
 
   console.log('history', history)
-  console.log('allBuyStocks', allBuyStocks)
   const finalReturn = ((capital / initialCapital - 1) * 100) // 計算總報酬
   const maxDrawdown = calculateMaxDrawdown(history) // 區間最大回徹
   const { mean, median, worst, best, annualReturnsLog } = calculateAnnualReturn(history) // 年度平均報酬率、年度中位數報酬率、最差年度報酬率、最佳年度報酬率、年度報酬率紀錄

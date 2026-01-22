@@ -50,6 +50,7 @@
                 <el-text>年度中位數報酬率: {{ returnCard.repeat.medianAnnualReturn }}％</el-text>
                 <el-text>最差年度報酬率: {{ returnCard.repeat.worstAnnualReturn }}％</el-text>
                 <el-text>最佳年度報酬率: {{ returnCard.repeat.bestAnnualReturn }}％</el-text>
+                <el-text>夏普值: {{ returnCard.repeat.sharpeRatio }}</el-text>
                 <el-text>輪動次數: {{ returnCard.repeat.rotationsNumber }}</el-text>
                 <el-text v-for="item in returnCard.repeat.annualReturnLog" :key="item.year">{{ item.year }} : {{ item.return.toFixed(2) }}％</el-text>
               </el-space>
@@ -76,6 +77,7 @@
                 <el-text>年度中位數報酬率: {{ returnCard.noRepeat.medianAnnualReturn }}％</el-text>
                 <el-text>最差年度報酬率: {{ returnCard.noRepeat.worstAnnualReturn }}％</el-text>
                 <el-text>最佳年度報酬率: {{ returnCard.noRepeat.bestAnnualReturn }}％</el-text>
+                <el-text>夏普值: {{ returnCard.noRepeat.sharpeRatio }}</el-text>
                 <el-text>輪動次數: {{ returnCard.noRepeat.rotationsNumber }}</el-text>
                 <el-text>平/中/勝/數 ：</el-text>
                 <el-text v-for="item in returnCard.noRepeat.annualReturnLog" :key="item.year">
@@ -238,6 +240,7 @@ const returnCard = reactive({
     rotationsNumber: 0, // 輪動次數
     positionDistribution: {}, // 持股分散度
     stockNameMap: {}, // 股票名稱紀錄
+    sharpeRatio: 0, // 夏普值
   },
   // 不重複進場
   noRepeat: {
@@ -251,6 +254,7 @@ const returnCard = reactive({
     rotationsNumber: 0, // 輪動次數
     positionDistribution: {}, // 持股分散度
     stockNameMap: {}, // 股票名稱紀錄
+    sharpeRatio: 0, // 夏普值
   },
 })
 // const backtestType = ref('') // 回測方式
@@ -330,6 +334,51 @@ const winRateComputed = ((data) => {
   return (winCount / returns.length) * 100
 })
 
+// 計算夏普值
+// data: 歷史資料
+// annualRf: 年度無風險利率
+// tradingDays: 一年交易天數
+// useLogReturn: 是否使用對數報酬率
+// 回傳值: 夏普值
+const sharpeRatioComputed = (data, { annualRf = 0.0, tradingDays = 252, useLogReturn = false } = {}) => {
+  if (!Array.isArray(data) || data.length < 2) return 0
+
+  // 1) sort by date asc (保險起見)
+  const sorted = [...data].sort((a, b) => String(a.date).localeCompare(String(b.date)))
+
+  // 2) build daily returns
+  const returns = []
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = Number(sorted[i - 1].netAsset)
+    const curr = Number(sorted[i].netAsset)
+    if (!Number.isFinite(prev) || !Number.isFinite(curr) || prev <= 0 || curr <= 0) continue
+
+    const r = useLogReturn ? Math.log(curr / prev) : (curr / prev - 1)
+    if (Number.isFinite(r)) returns.push(r)
+  }
+
+  const n = returns.length
+  if (n < 2) return 0
+
+  // 3) daily risk-free (近似)
+  const rfDaily = (1 + annualRf) ** (1 / tradingDays) - 1
+
+  // 4) mean & sample std (n-1)
+  const mean = returns.reduce((a, b) => a + b, 0) / n
+  const variance = returns.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1)
+  const std = Math.sqrt(variance)
+  if (std === 0) return 0
+
+  const sharpeDaily = (mean - rfDaily) / std
+  const sharpeAnnual = sharpeDaily * Math.sqrt(tradingDays)
+
+  console.log('sharpeAnnual', sharpeAnnual)
+  console.log("maxDailyReturn", Math.max(...returns))
+  console.log("minDailyReturn", Math.min(...returns))
+  return sharpeAnnual
+}
+
+
 // 處理檔案
 const handleFile = async (event) => {
   const file = event.target.files?.[0];
@@ -359,7 +408,6 @@ const handleFile = async (event) => {
   if (multiStrategyTest.value) {
     tableDataMulti.value.push(formatterData)
     fileNames.value.push(file.name)
-    console.log('tableDataMulti', tableDataMulti.value)
 
   } else {
     fileNames.value.push(file.name)
@@ -387,6 +435,7 @@ const dataAnalysisSingle2 = (data) => {
   returnCard.repeat.annualReturnLog = repeatResult.annualReturnsLog // 年度報酬率紀錄
   returnCard.repeat.positionDistribution = repeatResult.positionDistribution // 持股分散度
   returnCard.repeat.stockNameMap = repeatResult.stockNameMap // 股票名稱紀錄
+  returnCard.repeat.sharpeRatio = sharpeRatioComputed(repeatResult.history) // 夏普值
 
   // 不重複進場
   const noRepeatResult = calculateSimulationResult2(data, 10000, stocksPerRound.value, false, dayBuyRepeat.value)
@@ -400,6 +449,7 @@ const dataAnalysisSingle2 = (data) => {
   returnCard.noRepeat.annualReturnLog = noRepeatResult.annualReturnsLog // 年度報酬率紀錄
   returnCard.noRepeat.positionDistribution = noRepeatResult.positionDistribution // 持股分散度
   returnCard.noRepeat.stockNameMap = noRepeatResult.stockNameMap // 股票名稱紀錄
+  returnCard.noRepeat.sharpeRatio = sharpeRatioComputed(noRepeatResult.history) // 夏普值
 
   // 總策略計算
   returnCard.averageReturn = averageReturnComputed(data) // 平均報酬率
@@ -540,7 +590,6 @@ const dataAnalysisMultiSummary = () => {
 
 // 多策略分析2 分析只重疊兩個策略
 const dataAnalysisMulti = () => {
-  console.log('fileNames.value', fileNames.value)
   returnCard.backtestType = '多策略分析2'
   const result = findNameAndBuyDayOverlaps(tableDataMulti.value, fileNames.value)
   console.log('result', result)
