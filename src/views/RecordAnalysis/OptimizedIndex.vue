@@ -14,6 +14,24 @@
           <el-tag v-for="name in fileNames" :key="name" class="mx-1" closable @close="removeFile(name)">{{ name }}</el-tag>
           <span v-if="fileNames.length === 0" class="text-gray-400">未選擇檔案</span>
         </el-form-item>
+        <el-form-item label="範例檔案">
+           <el-select
+              v-model="selectedServerFiles"
+              multiple
+              filterable
+              collapse-tags
+              placeholder="請選擇範例檔案"
+              style="width: 240px; margin-right: 10px;"
+            >
+              <el-option
+                v-for="item in SERVER_FILES"
+                :key="item"
+                :label="item"
+                :value="item"
+              />
+            </el-select>
+            <el-button type="primary" plain @click="loadServerFiles">載入</el-button>
+        </el-form-item>
       </el-form>
 
       <el-divider content-position="left">進階設定</el-divider>
@@ -237,6 +255,7 @@
 import { parseCSV } from '@/utils/csvReader';
 import { businessSignals } from '@/utils/data/businessSignals.js'; // 景氣指標
 import * as echarts from 'echarts';
+import Papa from 'papaparse';
 import { nextTick, reactive, ref } from 'vue';
 import { calculateSimulationResult, calculateSimulationResult2, runMonteCarlo } from './utils/monteCarloMethod';
 
@@ -485,12 +504,35 @@ const sharpeRatioComputed = (data, { annualRf = 0.0, tradingDays = 252, useLogRe
 }
 
 
-// 處理檔案
-const handleFile = async (event) => {
-  const file = event.target.files?.[0];
-  if (!file) return
-  const data = await parseCSV(file);
-  console.log('CSV資料:', data);
+// 伺服器端檔案列表
+const SERVER_FILES = [
+  "低成交量均線多頭.csv",
+  "動能市值前段班.csv",
+  "動能市值前段班_贏過大盤.csv",
+  "動能成長股.csv",
+  "動能成長股_贏過大盤.csv",
+  "動能成長股_贏過大盤_取代均線多頭.csv",
+  "基本面同業前30_2015-2025_不成交量篩選.csv",
+  "小股本.csv",
+  "小股本_贏過大盤.csv",
+  "小股本_贏過大盤取代均線多頭.csv",
+  "本益比低於歷史.csv",
+  "營業利益率創新高.csv",
+  "營業利益率創新高_不成交量篩選.csv",
+  "營業利益率創新高_成交量大.csv",
+  "穩定獲利低本益比.csv",
+  "穩定獲利低本益比_贏過大盤.csv",
+  "穩定獲利低本益比_贏過大盤_取代均線多頭.csv",
+  "穩定發股利高殖利率.csv",
+  "穩定發股利高殖利率_贏過大盤.csv",
+  "穩定發股利高殖利率_贏過大盤_取代均線多頭.csv",
+  "贏過大盤bata.csv"
+];
+
+const selectedServerFiles = ref([]);
+
+// 處理並格式化 CSV 數據的通用函數
+const processData = (data, filename) => {
   const formatterData = data.map(item => {
     return {
         name: item["商品名稱"],
@@ -507,13 +549,59 @@ const handleFile = async (event) => {
   })
 
   if (multiStrategyTest.value) {
-    tableDataMulti.value.push(formatterData)
-    fileNames.value.push(file.name)
+    if(!fileNames.value.includes(filename)){
+        tableDataMulti.value.push(formatterData)
+        fileNames.value.push(filename)
+    }
   } else {
-    fileNames.value.push(file.name)
-    document.title = file.name; // 修改網頁標籤的標題
+    fileNames.value.push(filename)
+    document.title = filename; // 修改網頁標籤的標題
     tableData.value =  formatterData
   }
+}
+
+// 處理本地檔案上傳
+const handleFile = async (event) => {
+  const files = event.target.files;
+  if (!files || files.length === 0) return
+
+  // 支援多檔選取
+  for(let i=0; i<files.length; i++) {
+        const file = files[i];
+        const data = await parseCSV(file);
+        processData(data, file.name);
+  }
+}
+
+// 載入伺服器端檔案
+const loadServerFiles = async () => {
+    if(selectedServerFiles.value.length === 0) return;
+
+    // 清空單策略模式下的舊資料，若是多策略則不清空以利疊加
+    if (!multiStrategyTest.value) {
+        fileNames.value = [];
+        tableData.value = [];
+    }
+
+    for (const filename of selectedServerFiles.value) {
+        try {
+            const response = await fetch(`/2015-20251231/${filename}`);
+            if (!response.ok) throw new Error(`Fetch error: ${response.status}`);
+            const text = await response.text();
+
+            // PapaParse 也可以解析字串
+            const result = Papa.parse(text, { header: true, skipEmptyLines: true });
+            if(result.errors.length) {
+                console.error(`CSV Parse Error for ${filename}:`, result.errors);
+            }
+            processData(result.data, filename);
+
+        } catch (e) {
+            console.error(`Failed to load ${filename}:`, e);
+        }
+    }
+    // 載入後清空選擇，避免混亂
+    selectedServerFiles.value = [];
 }
 
 const dataAnalysisSingle2 = (data) => {

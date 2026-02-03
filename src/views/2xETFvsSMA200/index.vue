@@ -202,7 +202,7 @@ const backtest = (
 
   const smaQQQ = backtestSMAQQQ(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee, qqqData.value);
   /************************************************
-   * 通用：績效統計
+   * 通用：績效統計2
    ************************************************/
   function calcStats(equityCurve, rets) {
     const startEquity = equityCurve[0].equity;
@@ -433,6 +433,7 @@ const backtest = (
       });
       rets.push(usedRet);
 
+
       // --- 用今天收盤決定明天持倉 ---
       const sma = bar.sma;
       let nextHolding = holding;
@@ -495,7 +496,7 @@ const backtest = (
           const buyBar = getAssetBar(nextHolding, bar, bar.date2);
           const buyClose = buyBar?.close;
           // const buyHigh = buyBar?.high;
-          const buyHigh = buyBar?.open;
+          const buyHigh = buyBar?.close;
 
           if (Number.isFinite(buyClose) && Number.isFinite(buyHigh) && buyHigh > 0) {
             equity *= (buyClose / buyHigh);
