@@ -606,7 +606,6 @@ const loadServerFiles = async () => {
 
 const dataAnalysisSingle2 = (data) => {
   const repeatResult = calculateSimulationResult2(data, 10000, stocksPerRound.value, true, dayBuyRepeat.value)
-
   returnCard.repeat.totalReturn = repeatResult.finalReturn // 總報酬率
   returnCard.repeat.maxDrawdownValue = repeatResult.maxDrawdown // 區間最大回徹
   returnCard.repeat.rotationsNumber = repeatResult.rotations // 輪動次數
@@ -660,7 +659,7 @@ const dataAnalysisSingle2 = (data) => {
   }
 }
 
-const dataAnalysisSingle = (data) => {1
+const dataAnalysisSingle = (data) => {
   function findHigherBuyItems(list) {
     const MS_PER_DAY = 24 * 60 * 60 * 1000;
     const MAX_DAYS = 90;

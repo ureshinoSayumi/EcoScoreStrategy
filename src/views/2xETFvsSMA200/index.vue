@@ -3,7 +3,7 @@
     <el-main>
       <el-row :gutter="20">
         <el-col>
-          <input type="file" accept=".csv" multiple @change="testSMA200" />
+          <input type="file" accept=".csv" multiple @change="inputFile" />
           <el-button type="primary" @click="monteCarloSimulation">蒙地卡羅模擬</el-button>
           <el-form-item label="SMA">
             <el-input-number v-model="SMA" :min="0" size="small" />
@@ -186,7 +186,7 @@ const bhAnnualReturnLog = ref([]) // 年度報酬率紀錄
 /************************************************
  * 主函式：同時計算 Buy&Hold + SMA 策略
  ************************************************/
-const backtest = (
+const runTest = (
   rawBars,
   initialCapital = 1000000,
   window = 200,
@@ -196,11 +196,17 @@ const backtest = (
   sellBand = 0.00,
   fee = 0.00,
 ) =>  {
-  const bh = backtestBuyAndHold(rawBars, initialCapital);
-  // const sma = backtestSMA(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee);
-  const sma = backtestSMAQQQ(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee);
+  const bh = runBuyAndHold(rawBars, initialCapital);
 
-  const smaQQQ = backtestSMAQQQ(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee, qqqData.value);
+  // 用QLD 200SMA 當訊號來源
+  const sma = runSMAQQQ(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee);
+
+  // 用QLD 200SMA 當訊號來源，用QQQ取代現金
+  // const smaQQQ = runSMAQQQ(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee, qqqData.value);
+
+  // 用QQQ 200SMA 當訊號來源
+  const smaQQQ = runSMAFORQQQ(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee, qqqData.value);
+
   /************************************************
    * 通用：績效統計2
    ************************************************/
@@ -276,11 +282,8 @@ const backtest = (
     };
   }
 
-
-  /************************************************
-   * 策略1：Buy & Hold（從頭買到尾）
-   ************************************************/
-  function backtestBuyAndHold(rawBars, initialCapital = 1000000) {
+  // 策略1：Buy & Hold（從頭買到尾）
+  function runBuyAndHold(rawBars, initialCapital = 1000000) {
     const bars = [...rawBars]
       .map(r => ({
         date: new Date(r.Date),
@@ -312,15 +315,8 @@ const backtest = (
     };
   }
 
-
-  /************************************************
-   * 策略2：SMA window 站上就持有QLD、跌破就改持有QQQ（輪動）
-   * - 跟原版一樣：用今天收盤決定明天持倉
-   * - 持有QLD => 吃QLD日報酬
-   * - 持有QQQ => 吃QQQ日報酬（用 qqqData.value 對齊同日期）
-   ************************************************/
-
-  function backtestSMAQQQ(
+  // 策略2：SMA200 站上就持有QLD、跌破就賣出，或改持有QQQ，用今天收盤決定明天持倉
+  function runSMAQQQ(
     rawBars,
     window = 200,
     initialCapital = 1000000,
@@ -439,27 +435,27 @@ const backtest = (
       let nextHolding = holding;
 
       if (sma === null) {
-        aboveCount = 0;
-        belowCount = 0;
-        nextHolding = "CASH";
-      } else {
+          aboveCount = 0;
+          belowCount = 0;
+          nextHolding = "CASH";
+        } else {
         const relDiff = (bar.close - sma) / sma;
 
-        if (relDiff > (buyBand / 100)) {
-          aboveCount++;
-          belowCount = 0;
-        } else if (relDiff < -(sellBand / 100)) {
-          belowCount++;
-          aboveCount = 0;
-        } else {
-          aboveCount = 0;
-          belowCount = 0;
-        }
+          if (relDiff > (buyBand / 100)) {
+            aboveCount++;
+            belowCount = 0;
+          } else if (relDiff < -(sellBand / 100)) {
+            belowCount++;
+            aboveCount = 0;
+          } else {
+            aboveCount = 0;
+            belowCount = 0;
+          }
 
-        if (holding === "QLD") {
+          if (holding === "QLD") {
           if (belowCount >= exitSensitive) nextHolding = "QQQ";
-        } else {
-          if (aboveCount >= enterSensitive) nextHolding = "QLD";
+          } else {
+            if (aboveCount >= enterSensitive) nextHolding = "QLD";
           else nextHolding = holding === "CASH" ? "CASH" : "QQQ";
         }
       }
@@ -512,14 +508,235 @@ const backtest = (
       holding = nextHolding;
     }
 
-    console.log("tradeDays", tradeDays);
-    backtestSMA200OpenClose(tradeDays);
+    console.log("runSMAQQQ", tradeDays);
+    // analyzeSMA200OpenClose(tradeDays);
     return {
       equityCurve,
       stats: calcStats(equityCurve, rets),
       tradeCount,
     };
   }
+
+  // 策略3：SMA200 站上就持有QLD、跌破就賣出，用QQQ 200SMA 當訊號源
+  function runSMAFORQQQ(
+    rawBars,
+    window = 200,
+    initialCapital = 1000000,
+    enterSensitive = 1,
+    exitSensitive = 1,
+    buyBand = 0.00,
+    sellBand = 0.00,
+    fee = 0.00,
+    qqqBarsRaw = [],
+  ) {
+    let tradeDays = [];
+
+    // --- QLD bars（交易日基準）---
+    const bars = [...rawBars]
+      .map(r => ({
+        date: new Date(r.Date),
+        date2: r.Date,
+        close: Number(r.Close),
+        high: Number(r.High ?? r.Close),
+        low: Number(r.Low ?? r.Close),
+        open: Number(r.Open ?? r.Close),
+      }))
+      .sort((a, b) => a.date - b.date);
+
+    const n = bars.length;
+    if (n < window + 1) {
+      console.log(`資料太短，需要至少 ${window + 1} 根`);
+      return;
+    }
+
+    // --- QQQ map：date2 -> {close, high, low, open} ---
+    const qqqMap = new Map();
+    if (Array.isArray(qqqBarsRaw)) {
+      for (const r of qqqBarsRaw) {
+        qqqMap.set(r.Date, {
+          close: Number(r.Close),
+          high: Number(r.High ?? r.Close),
+          low: Number(r.Low ?? r.Close),
+          open: Number(r.Open ?? r.Close),
+        });
+      }
+    } else {
+      console.warn("你沒有傳入 qqqBarsRaw（qqqData.value），QQQ 報酬會視為 0，且無法做 High/Low 成交懲罰");
+    }
+
+    const getQQQBar = (date2) => qqqMap.get(date2) ?? null;
+
+    // 取某資產在當天的 close/high/low；缺資料就回 null
+    function getAssetBar(asset, qldBar /* bars[i] */, date2) {
+      if (asset === "QLD") return qldBar;
+      if (asset === "QQQ") return getQQQBar(date2);
+      return null; // CASH
+    }
+
+    // 用 QQQ close 算 200MA（對齊 QLD 交易日）
+    let qqqSum = 0;
+    const qqqCloseWindow = []; // 存最近 window 天的 QQQ close（僅在該日有 QQQ 資料時推進）
+
+    for (let i = 0; i < n; i++) {
+      const date2 = bars[i].date2;
+      const qqqBar = getQQQBar(date2);
+
+      // 保守：如果 QQQ 當天沒資料，就讓 qqqSma = null
+      if (!qqqBar || !Number.isFinite(qqqBar.close)) {
+        bars[i].qqqSma = null;
+        continue;
+      }
+
+      // 推進滑動窗
+      qqqCloseWindow.push(qqqBar.close);
+      qqqSum += qqqBar.close;
+
+      if (qqqCloseWindow.length > window) {
+        qqqSum -= qqqCloseWindow.shift();
+      }
+
+      bars[i].qqqSma = (qqqCloseWindow.length === window) ? (qqqSum / window) : null;
+    }
+
+    // --- 回測 ---
+    let equity = initialCapital;
+    let holding = "CASH"; // "QLD" | "QQQ" | "CASH"
+    const equityCurve = [];
+    const rets = [];
+    let tradeCount = 0;
+
+    let aboveCount = 0;
+    let belowCount = 0;
+
+    // 算 QQQ close-to-close ret 用
+    let prevQQQClose = null;
+
+    for (let i = 0; i < n; i++) {
+      const bar = bars[i];
+      const prev = i > 0 ? bars[i - 1] : null;
+
+      // --- QLD ret ---
+      let qldRet = 0;
+      if (prev) qldRet = bar.close / prev.close - 1;
+
+      // --- QQQ ret（同日期對齊）---
+      const qqqBarToday = getQQQBar(bar.date2);
+      let qqqRet = 0;
+
+      if (qqqBarToday && prevQQQClose != null) {
+        qqqRet = qqqBarToday.close / prevQQQClose - 1;
+      } else {
+        qqqRet = 0;
+      }
+
+      if (qqqBarToday && Number.isFinite(qqqBarToday.close)) {
+        prevQQQClose = qqqBarToday.close;
+      }
+
+      // --- 用昨天的 holding 吃今天 close-to-close 報酬 ---
+      let usedRet = 0;
+      if (holding === "QLD") usedRet = qldRet;
+      else if (holding === "QQQ") usedRet = qqqRet;
+      else usedRet = 0;
+
+      equity *= (1 + usedRet);
+
+      equityCurve.push({
+        date: bar.date,
+        date2: bar.date2,
+        equity,
+        holding,
+      });
+      rets.push(usedRet);
+
+      // 訊號來源改用 QQQ close vs QQQ SMA
+      const qqqSma = bar.qqqSma;
+      let nextHolding = holding;
+
+      // 如果 SMA 不可用（通常是前 window-1 天，或該日 QQQ 缺資料）
+      if (qqqSma === null) {
+        aboveCount = 0;
+        belowCount = 0;
+        nextHolding = "CASH"; // 原本邏輯是這樣；若想「缺資料就維持持倉」，可以改成 nextHolding = holding
+      } else {
+        const qqqCloseToday = qqqBarToday?.close;
+
+        if (!Number.isFinite(qqqCloseToday)) {
+          // QQQ 當天缺 close：保守處理
+          aboveCount = 0;
+          belowCount = 0;
+          nextHolding = "CASH";
+        } else {
+          const relDiff = (qqqCloseToday - qqqSma) / qqqSma;
+
+          if (relDiff > (buyBand / 100)) {
+            aboveCount++;
+            belowCount = 0;
+          } else if (relDiff < -(sellBand / 100)) {
+            belowCount++;
+            aboveCount = 0;
+          } else {
+            aboveCount = 0;
+            belowCount = 0;
+          }
+
+          if (holding === "QLD") {
+            if (belowCount >= exitSensitive) nextHolding = "CASH";
+          } else {
+            if (aboveCount >= enterSensitive) nextHolding = "QLD";
+            else nextHolding = holding === "CASH" ? "CASH" : "QLD";
+          }
+        }
+      }
+
+      // --- 換倉：賣用當日 Low、買用當日 High（你目前先改成 close，等同不懲罰）---
+      if (nextHolding !== holding) {
+        tradeCount++;
+        tradeDays.push({
+          date2: bar.date2,
+          holding,
+          nextHolding,
+          equity,
+          ...bar,
+        });
+
+        // 1) 賣出懲罰（目前用 close）
+        if (holding !== "CASH") {
+          const sellBar = getAssetBar(holding, bar, bar.date2);
+          const sellClose = sellBar?.close;
+          const sellLow = sellBar?.close;
+
+          if (Number.isFinite(sellClose) && Number.isFinite(sellLow) && sellClose > 0) {
+            equity *= (sellLow / sellClose);
+          }
+        }
+
+        // 2) 買入懲罰（目前用 close）
+        if (nextHolding !== "CASH") {
+          const buyBar = getAssetBar(nextHolding, bar, bar.date2);
+          const buyClose = buyBar?.close;
+          const buyHigh = buyBar?.close; // 你原本改成 close
+
+          if (Number.isFinite(buyClose) && Number.isFinite(buyHigh) && buyHigh > 0) {
+            equity *= (buyClose / buyHigh);
+          }
+        }
+
+        // 3) fee（你原本註解掉）
+        // equity *= 1 - (fee / 100);
+      }
+
+      holding = nextHolding;
+    }
+
+    console.log("runSMAFORQQQ", tradeDays);
+    return {
+      equityCurve,
+      stats: calcStats(equityCurve, rets),
+      tradeCount,
+    };
+  }
+
   return {
     buyAndHold: bh.stats,
     smaStrategy: sma.stats,
@@ -533,14 +750,15 @@ const backtest = (
 }
 
 
-const testSMA200 = async (event) => {
+const inputFile = async (event) => {
   const file = event.target.files?.[0];
   if (!file) {
     return
   }
   const data = await parseCSV(file);
   console.log('CSV資料:', data);
-  backtestSMA200OpenClose(data);
+  // 分析
+  analyzeSMA200OpenClose(data);
 
   // data: 原始資料
   // 1000000: 初始資金
@@ -556,7 +774,7 @@ const testSMA200 = async (event) => {
 }
 
 const backtestSMA200 = (data) => {
-  const result = backtest(data, 1000000, SMA.value, enterSensitive.value, exitSensitive.value, buyBand.value, sellBand.value, fee.value);
+  const result = runTest(data, 1000000, SMA.value, enterSensitive.value, exitSensitive.value, buyBand.value, sellBand.value, fee.value);
 
 
   console.log("Buy & Hold :", result.buyAndHold);
@@ -707,7 +925,7 @@ const buildChart = (bhCurve, smaCurve, smaQQQCurve) => {
 }
 
 // 回測驗證在200SMA上下開盤、收盤
-const backtestSMA200OpenClose = (data) => {
+const analyzeSMA200OpenClose = (data) => {
 
   function analyzeOpenClose(bars) {
     const diffs = [];          // signed diff: (Close-Open)/Open
@@ -787,35 +1005,35 @@ const backtestSMA200OpenClose = (data) => {
 
     const pct = res._fmt.pct;
 
-    console.log("==================================================");
-    console.log(`📊 ${label}`);
-    console.log("==================================================");
-    console.log(`樣本數: ${res.sampleSize} 天`);
+    // console.log("==================================================");
+    // console.log(`📊 ${label}`);
+    // console.log("==================================================");
+    // console.log(`樣本數: ${res.sampleSize} 天`);
     if (res.skipped) console.log(`跳過資料: ${res.skipped} 筆（Open/Close 不合法）`);
-    console.log("");
+    // console.log("");
 
-    console.log("【勝率統計】");
-    console.log(`收盤 > 開盤: ${res.closeWinCount} 天  (${pct(res.closeHigherWinRate, 2)})`);
-    console.log(`開盤 > 收盤: ${res.openWinCount} 天  (${pct(res.openHigherWinRate, 2)})`);
-    console.log(`平手(收盤=開盤): ${res.ties} 天 (${pct(res.tieRate, 2)})`);
-    console.log("");
+    // console.log("【勝率統計】");
+    // console.log(`收盤 > 開盤: ${res.closeWinCount} 天  (${pct(res.closeHigherWinRate, 2)})`);
+    // console.log(`開盤 > 收盤: ${res.openWinCount} 天  (${pct(res.openHigherWinRate, 2)})`);
+    // console.log(`平手(收盤=開盤): ${res.ties} 天 (${pct(res.tieRate, 2)})`);
+    // console.log("");
 
-    console.log("【整體差異（以開盤為基準，(Close-Open)/Open）】");
-    console.log(`平均差異: ${pct(res.avgSignedDiff, 4)}   （正=收盤較高，負=開盤較高）`);
-    console.log(`中位數差異: ${pct(res.medianSignedDiff, 4)}`);
-    console.log("");
+    // console.log("【整體差異（以開盤為基準，(Close-Open)/Open）】");
+    // console.log(`平均差異: ${pct(res.avgSignedDiff, 4)}   （正=收盤較高，負=開盤較高）`);
+    // console.log(`中位數差異: ${pct(res.medianSignedDiff, 4)}`);
+    // console.log("");
 
-    console.log("【收盤贏的日子（收盤比開盤高幾%）】");
-    console.log(`平均贏幅: ${pct(res.closeWin_avgHigher, 4)}`);
-    console.log(`中位數贏幅: ${pct(res.closeWin_medianHigher, 4)}`);
-    console.log("");
+    // console.log("【收盤贏的日子（收盤比開盤高幾%）】");
+    // console.log(`平均贏幅: ${pct(res.closeWin_avgHigher, 4)}`);
+    // console.log(`中位數贏幅: ${pct(res.closeWin_medianHigher, 4)}`);
+    // console.log("");
 
-    console.log("【開盤贏的日子（開盤比收盤高幾%）】");
-    console.log(`平均贏幅: ${pct(res.openWin_avgHigher, 4)}`);
-    console.log(`中位數贏幅: ${pct(res.openWin_medianHigher, 4)}`);
-    console.log("");
+    // console.log("【開盤贏的日子（開盤比收盤高幾%）】");
+    // console.log(`平均贏幅: ${pct(res.openWin_avgHigher, 4)}`);
+    // console.log(`中位數贏幅: ${pct(res.openWin_medianHigher, 4)}`);
+    // console.log("");
 
-    console.log("==================================================\n");
+    // console.log("==================================================\n");
   }
 
 
@@ -899,7 +1117,7 @@ const monteCarloSimulation = () => {
 
 
   /***********************************************
-   * 3. 跑 N 條路徑，全部丟進 backtest
+   * 3. 跑 N 條路徑，全部丟進 runTest
    ***********************************************/
   function runSimulationBatch(simCount, multiplier, dailyExpense, backtestOptions) {
       const results = [];
@@ -907,8 +1125,8 @@ const monteCarloSimulation = () => {
       for (let i = 0; i < simCount; i++) {
           const bars = simulateBars(multiplier, dailyExpense, "2000-01-01");
 
-          // 直接使用你的 backtest（不修改）
-          const out = backtest(
+          // 直接使用你的 runTest（不修改）
+          const out = runTest(
               bars,
               backtestOptions.initialCapital,
               backtestOptions.window,
