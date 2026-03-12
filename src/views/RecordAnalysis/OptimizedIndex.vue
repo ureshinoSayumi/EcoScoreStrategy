@@ -569,6 +569,7 @@ const handleFile = async (event) => {
   for(let i=0; i<files.length; i++) {
         const file = files[i];
         const data = await parseCSV(file);
+        console.log('data', data)
         processData(data, file.name);
   }
 }
