@@ -39,6 +39,12 @@ const router = createRouter({
       name: '2xETFvsSMA200',
       component: () => import('@/views/2xETFvsSMA200/index.vue'),
     },
+    // 策略選股比較
+    {
+      path: '/strategyCompare',
+      name: 'strategyCompare',
+      component: () => import('@/views/StrategyCompare/index.vue'),
+    },
     {
       path: '/about',
       name: 'about',
