@@ -1,5 +1,4 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import HomeView from '../views/HomeView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -7,7 +6,13 @@ const router = createRouter({
     {
       path: '/',
       name: 'home',
-      component: HomeView,
+      component: () => import('@/views/HomePage.vue'),
+    },
+    // 景氣循環投資法（原首頁功能）
+    {
+      path: '/ecoScore',
+      name: 'ecoScore',
+      component: () => import('@/views/HomeView.vue'),
     },
     // 技術分析投資法 單筆買賣
     {
