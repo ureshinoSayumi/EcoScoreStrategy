@@ -817,7 +817,17 @@ const dataAnalysisMulti = () => {
       if (nameCmp !== 0) return nameCmp;
       return (a.code || '').localeCompare(b.code || '');
     });
-    return result;
+
+    // 把 name buyDay code 一樣的去重，但要保留原本所有欄位
+    const seen = new Map();
+    const deduped = [];
+    for (const row of result) {
+      const key = `${row.name}||${row.buyDay}||${row.code}`;
+      if (seen.has(key)) continue;
+      seen.set(key, true);
+      deduped.push(row);
+    }
+    return deduped;
   }
 
   /**
