@@ -45,9 +45,9 @@ export const parseCSV = async (file) => {
 };
 
 /**
- * 解析策略選股 CSV（含 代碼、商品 欄位）
+ * 解析策略選股 CSV（含 代碼、商品、總量、產業、細產業 等欄位）
  * 支援前幾行為 metadata 的格式，自動尋找標題列
- * @returns {Promise<{ code: string, product: string }[]>}
+ * @returns {Promise<{ code: string, product: string, totalVolume: string, industry: string, subIndustry: string }[]>}
  */
 export const parseStrategyCSV = async (file) => {
   const utf8Text = await readFileAsUTF8(file);
@@ -74,7 +74,13 @@ export const parseStrategyCSV = async (file) => {
             const code = getVal(row, '代碼');
             const product = getVal(row, '商品');
             if (!code && !product) return null;
-            return { code, product };
+            return {
+              code,
+              product,
+              totalVolume: getVal(row, '總量'),
+              industry: getVal(row, '產業'),
+              subIndustry: getVal(row, '細產業'),
+            };
           })
           .filter(Boolean);
         resolve(items);

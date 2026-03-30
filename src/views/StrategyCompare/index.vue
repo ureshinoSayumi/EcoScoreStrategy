@@ -33,7 +33,7 @@
       <!-- 單一策略或多策略：每個策略一個 card -->
       <el-row :gutter="20">
         <el-col
-          v-for="(strategy, idx) in strategyList"
+          v-for="strategy in strategyList"
           :key="strategy.fileName"
           :xs="24"
           :sm="24"
@@ -48,12 +48,19 @@
             </template>
             <div class="stock-list">
               <div
-                v-for="item in strategy.stocks"
-                :key="item.code"
+                v-for="(item, sIdx) in strategy.stocks"
+                :key="`${item.code}-${sIdx}`"
                 class="stock-item"
               >
-                <el-tag size="small" type="info">{{ item.code }}</el-tag>
-                <span class="product-name">{{ item.product }}</span>
+                <div class="stock-row stock-row-main">
+                  <el-tag size="small" type="info">{{ item.code }}</el-tag>
+                  <span class="product-name">{{ item.product }}</span>
+                </div>
+                <div class="stock-meta">
+                  <span v-if="item.totalVolume">總量：{{ item.totalVolume }}</span>
+                  <span v-if="item.industry">產業：{{ item.industry }}</span>
+                  <span v-if="item.subIndustry">細產業：{{ item.subIndustry }}</span>
+                </div>
               </div>
             </div>
           </el-card>
@@ -82,6 +89,11 @@
                 <div class="overlap-header">
                   <el-tag size="small" type="success">{{ item.code }}</el-tag>
                   <span class="product-name">{{ item.product }}</span>
+                </div>
+                <div class="overlap-meta">
+                  <span v-if="item.totalVolume">總量：{{ item.totalVolume }}</span>
+                  <span v-if="item.industry">產業：{{ item.industry }}</span>
+                  <span v-if="item.subIndustry">細產業：{{ item.subIndustry }}</span>
                 </div>
                 <div class="strategy-tags">
                   <el-tag
@@ -149,10 +161,23 @@ const overlapList = computed(() => {
   const codeToStrategies = new Map()
 
   for (const s of strategyList.value) {
-    for (const { code, product } of s.stocks) {
+    for (const row of s.stocks) {
+      const { code, product, totalVolume, industry, subIndustry } = row
       const key = code
       if (!codeToStrategies.has(key)) {
-        codeToStrategies.set(key, { code, product, strategies: [] })
+        codeToStrategies.set(key, {
+          code,
+          product,
+          totalVolume: totalVolume || '',
+          industry: industry || '',
+          subIndustry: subIndustry || '',
+          strategies: [],
+        })
+      } else {
+        const e = codeToStrategies.get(key)
+        if (!e.totalVolume && totalVolume) e.totalVolume = totalVolume
+        if (!e.industry && industry) e.industry = industry
+        if (!e.subIndustry && subIndustry) e.subIndustry = subIndustry
       }
       const entry = codeToStrategies.get(key)
       if (!entry.strategies.includes(s.fileName)) {
@@ -212,11 +237,29 @@ const overlapList = computed(() => {
 
 .stock-item {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 10px;
   background: #f5f7fa;
   border-radius: 6px;
+  min-width: 200px;
+}
+
+.stock-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.stock-meta,
+.overlap-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  font-size: 12px;
+  color: #606266;
 }
 
 .product-name {
