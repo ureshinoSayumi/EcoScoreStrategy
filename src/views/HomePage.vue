@@ -44,6 +44,7 @@ const routeItems = computed(() => {
     fetchStock: '取得股票資料',
     recordAnalysis: 'XQ 分析器',
     optimizedIndex: 'XQ 分析器 重製版',
+    statAnalysis: '統計分析（雙 CSV 合併）',
     '2xETFvsSMA200': '2倍ETF vs SMA200',
     strategyCompare: '策略選股比較',
     holdingsRecord: '持股紀錄',
