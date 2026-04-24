@@ -50,6 +50,12 @@ const router = createRouter({
       name: 'strategyCompare',
       component: () => import('@/views/StrategyCompare/index.vue'),
     },
+    // 持股紀錄（未來串接證交所 API）
+    {
+      path: '/holdingsRecord',
+      name: 'holdingsRecord',
+      component: () => import('@/views/HoldingsRecord/HoldingsRecordView.vue'),
+    },
     {
       path: '/about',
       name: 'about',

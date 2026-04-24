@@ -65,7 +65,6 @@
             </div>
           </el-card>
         </el-col>
-
         <!-- 多策略時：顯示被兩個以上策略選到的股票 -->
         <el-col
           v-if="strategyList.length >= 2 && overlapList.length > 0"
@@ -196,6 +195,7 @@ const overlapList = computed(() => {
 .strategy-compare-container {
   padding: 20px;
   max-width: 1400px;
+
   margin: 0 auto;
 }
 
