@@ -112,7 +112,7 @@
         <el-table-column
           prop="signalPrice"
           label="信號價格"
-          width="100"
+          width="105"
           align="right"
           sortable
           :sort-method="sortNullableNumKey('signalPrice')"
@@ -122,7 +122,7 @@
         <el-table-column
           prop="buyPrice"
           label="買入價格"
-          width="100"
+          width="105"
           align="right"
           sortable
           :sort-method="sortNullableNumKey('buyPrice')"
@@ -132,7 +132,7 @@
         <el-table-column
           prop="buyCost"
           label="買入成本"
-          width="100"
+          width="105"
           align="right"
           sortable
           :sort-method="sortNullableNumKey('buyCost')"
@@ -142,7 +142,7 @@
         <el-table-column
           prop="_latestPrice"
           label="最新股價"
-          width="100"
+          width="105"
           align="right"
           sortable
           :sort-method="sortNullableNumKey('_latestPrice')"
@@ -170,6 +170,29 @@
           <template #default="{ row }">
             <span :class="pnlPercentClass(row._pnlPercent)">{{
               formatPnlPercent(row._pnlPercent)
+            }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column
+          prop="_efficiency"
+          label="效率"
+          width="110"
+          align="right"
+          sortable
+          :sort-method="sortNullableNumKey('_efficiency')"
+        >
+          <template #header>
+            <span>效率</span>
+            <el-tooltip
+              content="損益率 ÷（資料日期與買入日之曆日差）；僅在持有天數 &gt; 0 且有損益率時計算，單位 %／日"
+              placement="top"
+            >
+              <span class="col-hint" aria-label="效率說明">ⓘ</span>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">
+            <span :class="pnlPercentClass(row._efficiency)">{{
+              formatEfficiency(row._efficiency)
             }}</span>
           </template>
         </el-table-column>
@@ -220,7 +243,7 @@
         <el-table-column
           prop="volume"
           label="成交量"
-          width="110"
+          width="100"
           align="right"
           sortable
           :sort-method="sortNullableNumKey('volume')"
@@ -461,6 +484,19 @@ function parseQuotePrice(q) {
   return Number.isFinite(n) ? n : NaN
 }
 
+/** API 民國日 1150423 → 本地日界線 timestamp（用於與買入日算曆日差） */
+function parseQuoteRocToTime(rocYyyMmDd) {
+  if (rocYyyMmDd == null || rocYyyMmDd === '' || rocYyyMmDd === '—') return null
+  const s = String(rocYyyMmDd).replace(/\D/g, '')
+  if (s.length !== 7) return null
+  const rocY = parseInt(s.slice(0, 3), 10)
+  const mm = parseInt(s.slice(3, 5), 10)
+  const dd = parseInt(s.slice(5, 7), 10)
+  if (![rocY, mm, dd].every((x) => Number.isFinite(x))) return null
+  const y = rocY + 1911
+  return new Date(y, mm - 1, dd).getTime()
+}
+
 /** API 民國日 1150423 → 顯示 2026-04-23 */
 function formatQuoteDate(rocYyyMmDd) {
   if (rocYyyMmDd == null || rocYyyMmDd === '' || rocYyyMmDd === '—') return '—'
@@ -472,6 +508,13 @@ function formatQuoteDate(rocYyyMmDd) {
   if (!Number.isFinite(rocY)) return String(rocYyyMmDd)
   const y = rocY + 1911
   return `${y}-${mm}-${dd}`
+}
+
+/** 兩個本地午夜 timestamp 的曆日差（行情日 − 買入日） */
+function diffCalendarDays(tEnd, tStart) {
+  if (tEnd == null || tStart == null) return null
+  const d = Math.round((tEnd - tStart) / 86400000)
+  return Number.isFinite(d) ? d : null
 }
 
 const holdingsWithQuotes = computed(() => {
@@ -510,12 +553,27 @@ const holdingsWithQuotes = computed(() => {
       pnlPercent = ((marketValue - buyC) / buyC) * 100
     }
 
+    const quoteDayT = parseQuoteRocToTime(quote?.Date ?? '')
+    const buyDayT = parseSlashYmdToTime(row.buyDate)
+    const heldDays = diffCalendarDays(quoteDayT, buyDayT)
+    let efficiency = null
+    if (
+      heldDays != null &&
+      heldDays > 0 &&
+      pnlPercent != null &&
+      Number.isFinite(pnlPercent)
+    ) {
+      efficiency = pnlPercent / heldDays
+    }
+
     return {
       ...row,
       _latestPrice: Number.isFinite(priceNum) ? priceNum : null,
       _marketValue: marketValue,
       _pnlPercent: pnlPercent,
       _quoteDate: quote?.Date ?? '',
+      _heldDays: heldDays,
+      _efficiency: efficiency,
     }
   })
 })
@@ -550,6 +608,8 @@ onMounted(async () => {
  * @property {string} industry - 產業
  * @property {string} pattern - 型態
  * @property {number|null} volume - 成交量
+ * @property {number|null} [_heldDays] - 資料日期與買入日曆日差
+ * @property {number|null} [_efficiency] - 損益率／持有天數（%/日）
  */
 const holdings = ref([...HOLDINGS_SEED])
 
@@ -724,6 +784,15 @@ function formatPnlPercent(val) {
   return `${sign}${n.toFixed(2)}%`
 }
 
+/** 效率：報酬率／天，%/日 */
+function formatEfficiency(val) {
+  if (val === null || val === undefined || Number.isNaN(val)) return '—'
+  const n = Number(val)
+  if (Number.isNaN(n)) return '—'
+  const sign = n > 0 ? '+' : ''
+  return `${sign}${n.toFixed(4)}%`
+}
+
 function formatWinRate(ratio) {
   if (ratio == null || Number.isNaN(ratio)) return '—'
   return `${(ratio * 100).toFixed(2)}%`
@@ -820,5 +889,13 @@ function formatSignedNtDollar(val) {
 
 .strategy-table {
   margin-top: 0;
+}
+
+.col-hint {
+  margin-left: 4px;
+  cursor: help;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  vertical-align: middle;
 }
 </style>
