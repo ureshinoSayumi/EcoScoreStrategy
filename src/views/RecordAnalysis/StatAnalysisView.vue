@@ -9,12 +9,32 @@
 
       <p class="hint">
         請各上傳一個與「XQ 分析器 重製版」相同格式的 CSV（欄位：商品名稱、商品代碼、序號、進場時間、進場價格、出場時間、出場價格、報酬率…）。<br />
-        以<strong>商品名稱</strong>與<strong>進場時間</strong>相同者合併為一列；左檔欄位後綴 <code>_30</code>，右檔 <code>_60</code>。<br />
+        以<strong>商品名稱</strong>與<strong>進場時間</strong>相同者合併為一列；左／右檔對應的合併欄位後綴可自訂（預設 <code>_30</code>、<code>_60</code>，亦可改為 <code>_10</code>、<code>_90</code> 等，檔名不必含該字串）。<br />
         <strong>兩個檔案都上傳並解析成功後</strong>才會合併資料並顯示統計與政策模擬（合併明細表目前關閉）。
       </p>
 
       <el-form label-width="120px" class="upload-form">
-        <el-form-item label="CSV（_30）">
+        <el-form-item label="左檔合併後綴">
+          <el-input
+            v-model="mergeSuffixLeft"
+            placeholder="_30 或 _10"
+            maxlength="16"
+            class="suffix-input"
+            clearable
+          />
+          <el-text size="small" type="info" class="suffix-hint">合併表左欄位名稱後綴，可填 _10；只填數字會自動變成 _數字</el-text>
+        </el-form-item>
+        <el-form-item label="右檔合併後綴">
+          <el-input
+            v-model="mergeSuffixRight"
+            placeholder="_60 或 _90"
+            maxlength="16"
+            class="suffix-input"
+            clearable
+          />
+          <el-text size="small" type="info" class="suffix-hint">合併表右欄位名稱後綴；須與左檔不同</el-text>
+        </el-form-item>
+        <el-form-item label="CSV（左檔）">
           <input
             ref="input30Ref"
             type="file"
@@ -26,7 +46,7 @@
             {{ fileName30 }}
           </el-tag>
         </el-form-item>
-        <el-form-item label="CSV（_60）">
+        <el-form-item label="CSV（右檔）">
           <input
             ref="input60Ref"
             type="file"
@@ -50,7 +70,7 @@
             <el-card shadow="never" class="side-stats-card">
               <template #header>
                 <div class="side-stats-card__header">
-                  <span class="side-stats-card__title">_30（左檔）統計</span>
+                  <span class="side-stats-card__title">{{ mergeSuffixLeftNorm }}（左檔）統計</span>
                   <el-text size="small" type="info">算法同 OptimizedIndex 單策略表格</el-text>
                 </div>
               </template>
@@ -74,7 +94,7 @@
             <el-card shadow="never" class="side-stats-card">
               <template #header>
                 <div class="side-stats-card__header">
-                  <span class="side-stats-card__title">_60（右檔）統計</span>
+                  <span class="side-stats-card__title">{{ mergeSuffixRightNorm }}（右檔）統計</span>
                   <el-text size="small" type="info">算法同 OptimizedIndex 單策略表格</el-text>
                 </div>
               </template>
@@ -99,10 +119,10 @@
 
       <div v-if="bothFilesReady && groupedReturnStats" class="grouped-stats">
         <div class="grouped-stats__head">
-          <h3 class="grouped-stats__title">依 _30 報酬正負分組（條件統計）</h3>
+          <h3 class="grouped-stats__title">依 {{ mergeSuffixLeftNorm }} 報酬正負分組（條件統計）</h3>
           <el-text size="small" type="info">
             僅使用合併表中<strong>兩側報酬均可解析為數字</strong>的列，共
-            {{ groupedReturnStats.pairedCount }} 筆。Δ = r<sub>60</sub> − r<sub>30</sub>（與
+            {{ groupedReturnStats.pairedCount }} 筆。Δ = r<sub>右</sub> − r<sub>左</sub>（右檔 {{ mergeSuffixRightNorm }}、左檔 {{ mergeSuffixLeftNorm }}；與
             CSV 報酬同尺度，表列以 % 顯示）。
           </el-text>
         </div>
@@ -381,7 +401,7 @@
           </template>
           <p class="policy-sim__rules">
             最多持有 {{ policyMaxPositions }} 檔（可調整）。滿 30 天若 r<sub>30</sub>&lt;0 則賣出，釋出之「特殊空位」不買選股池，該筆資金均分加碼到當日已滿 30 天且
-            r<sub>30</sub>&gt;0 的持倉；加碼至 60 天出場時以 sellPrice<sub>60</sub>/buyPrice<sub>30</sub> 比例一併了結。60
+            r<sub>30</sub>&gt;0 的持倉；加碼視為在 30 天價位投入，60 天出場時以 sellPrice<sub>60</sub>/sellPrice<sub>30</sub> 比例一併了結（缺價時以報酬率換算）。60
             天正常到期賣出後空位可再買持池。r<sub>30</sub>=0 不視為停損。執行模擬後若開啟「Console 時間軸」，請打開開發者工具 Console 檢視逐日事件。
           </p>
           <el-form :inline="true" class="policy-sim__form">
@@ -425,6 +445,43 @@
                 }}%／{{ policySimResult.best.toFixed(2) }}%
               </el-descriptions-item>
             </el-descriptions>
+            <p class="policy-sim__annual-hint">
+              模擬回測詳情（下表：淨值年度報酬／持池依進場年之 r60 平均／中位／勝率／筆數；開啟 Console 時間軸時會同步輸出摘要與表格）
+            </p>
+            <el-table
+              v-if="policySimResult.annualDetailTable?.length"
+              :data="policySimResult.annualDetailTable"
+              border
+              stripe
+              size="small"
+              class="policy-sim__annual-table"
+              max-height="320"
+            >
+              <el-table-column prop="year" label="年度" width="72" align="center" />
+              <el-table-column label="淨值年度報酬" min-width="120" align="right">
+                <template #default="{ row }">{{ fmtPolicyPct(row.portfolioYearReturnPct) }}</template>
+              </el-table-column>
+              <el-table-column :label="`平均（持池 ${mergeSuffixRightNorm}）`" min-width="120" align="right">
+                <template #default="{ row }">{{ fmtPolicyPct(row.poolAvgReturnPct) }}</template>
+              </el-table-column>
+              <el-table-column :label="`中位（持池 ${mergeSuffixRightNorm}）`" min-width="120" align="right">
+                <template #default="{ row }">{{ fmtPolicyPct(row.poolMedianReturnPct) }}</template>
+              </el-table-column>
+              <el-table-column :label="`勝率（持池 ${mergeSuffixRightNorm}）`" min-width="120" align="right">
+                <template #default="{ row }">{{ fmtPolicyPct(row.poolWinRatePct) }}</template>
+              </el-table-column>
+              <el-table-column prop="poolTradeCount" label="筆數" width="72" align="right" />
+            </el-table>
+            <div v-if="policySimResult.history?.length" class="policy-sim__charts">
+              <div class="policy-sim__chart-wrapper">
+                <h4 class="policy-sim__chart-title">資金 / 持倉成本 / 總資產走勢（政策模擬）</h4>
+                <div ref="policyChartAssetRef" class="policy-sim__chart"></div>
+              </div>
+              <div class="policy-sim__chart-wrapper">
+                <h4 class="policy-sim__chart-title">持池 {{ mergeSuffixRightNorm }} 報酬率分佈</h4>
+                <div ref="policyChartReturnRef" class="policy-sim__chart"></div>
+              </div>
+            </div>
           </div>
         </el-card>
       </div>
@@ -440,47 +497,47 @@
       >
         <el-table-column prop="productName" label="商品名稱" min-width="120" show-overflow-tooltip />
         <el-table-column label="商品代碼" align="center">
-          <el-table-column prop="code_30" label="_30" width="88" show-overflow-tooltip />
-          <el-table-column prop="code_60" label="_60" width="88" show-overflow-tooltip />
+          <el-table-column :prop="`code${mergeSuffixLeftNorm}`" :label="mergeSuffixLeftNorm" width="88" show-overflow-tooltip />
+          <el-table-column :prop="`code${mergeSuffixRightNorm}`" :label="mergeSuffixRightNorm" width="88" show-overflow-tooltip />
         </el-table-column>
         <el-table-column prop="buyDay" label="進場時間" width="118" />
         <el-table-column label="進場價格" align="right">
-          <el-table-column label="_30" width="100" align="right">
-            <template #default="{ row }">{{ formatCell(row.buyPrice_30) }}</template>
+          <el-table-column :label="mergeSuffixLeftNorm" width="100" align="right">
+            <template #default="{ row }">{{ formatCell(row[`buyPrice${mergeSuffixLeftNorm}`]) }}</template>
           </el-table-column>
-          <el-table-column label="_60" width="100" align="right">
-            <template #default="{ row }">{{ formatCell(row.buyPrice_60) }}</template>
+          <el-table-column :label="mergeSuffixRightNorm" width="100" align="right">
+            <template #default="{ row }">{{ formatCell(row[`buyPrice${mergeSuffixRightNorm}`]) }}</template>
           </el-table-column>
         </el-table-column>
         <el-table-column label="出場時間" align="center">
-          <el-table-column prop="sellDay_30" label="_30" width="118" show-overflow-tooltip />
-          <el-table-column prop="sellDay_60" label="_60" width="118" show-overflow-tooltip />
+          <el-table-column :prop="`sellDay${mergeSuffixLeftNorm}`" :label="mergeSuffixLeftNorm" width="118" show-overflow-tooltip />
+          <el-table-column :prop="`sellDay${mergeSuffixRightNorm}`" :label="mergeSuffixRightNorm" width="118" show-overflow-tooltip />
         </el-table-column>
         <el-table-column label="出場價格" align="right">
-          <el-table-column label="_30" width="100" align="right">
-            <template #default="{ row }">{{ formatCell(row.sellPrice_30) }}</template>
+          <el-table-column :label="mergeSuffixLeftNorm" width="100" align="right">
+            <template #default="{ row }">{{ formatCell(row[`sellPrice${mergeSuffixLeftNorm}`]) }}</template>
           </el-table-column>
-          <el-table-column label="_60" width="100" align="right">
-            <template #default="{ row }">{{ formatCell(row.sellPrice_60) }}</template>
+          <el-table-column :label="mergeSuffixRightNorm" width="100" align="right">
+            <template #default="{ row }">{{ formatCell(row[`sellPrice${mergeSuffixRightNorm}`]) }}</template>
           </el-table-column>
         </el-table-column>
         <el-table-column label="持有區間（日）" align="right">
-          <el-table-column label="_30" width="100" align="right">
-            <template #default="{ row }">{{ formatHoldingDays(row.holdingDays_30) }}</template>
+          <el-table-column :label="mergeSuffixLeftNorm" width="100" align="right">
+            <template #default="{ row }">{{ formatHoldingDays(row[`holdingDays${mergeSuffixLeftNorm}`]) }}</template>
           </el-table-column>
-          <el-table-column label="_60" width="100" align="right">
-            <template #default="{ row }">{{ formatHoldingDays(row.holdingDays_60) }}</template>
+          <el-table-column :label="mergeSuffixRightNorm" width="100" align="right">
+            <template #default="{ row }">{{ formatHoldingDays(row[`holdingDays${mergeSuffixRightNorm}`]) }}</template>
           </el-table-column>
         </el-table-column>
         <el-table-column label="報酬率" align="right">
-          <el-table-column label="_30" min-width="100" align="right">
+          <el-table-column :label="mergeSuffixLeftNorm" min-width="100" align="right">
             <template #default="{ row }">
-              <span :class="returnClass(row.return_30)">{{ formatCell(row.return_30) }}</span>
+              <span :class="returnClass(row[`return${mergeSuffixLeftNorm}`])">{{ formatCell(row[`return${mergeSuffixLeftNorm}`]) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="_60" min-width="100" align="right">
+          <el-table-column :label="mergeSuffixRightNorm" min-width="100" align="right">
             <template #default="{ row }">
-              <span :class="returnClass(row.return_60)">{{ formatCell(row.return_60) }}</span>
+              <span :class="returnClass(row[`return${mergeSuffixRightNorm}`])">{{ formatCell(row[`return${mergeSuffixRightNorm}`]) }}</span>
             </template>
           </el-table-column>
         </el-table-column>
@@ -490,9 +547,10 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
+import * as echarts from 'echarts'
 import { parseCSV } from '@/utils/csvReader'
 import { calculatePolicyPyramidSimulation } from './utils/policySimulation'
 
@@ -527,6 +585,21 @@ const fileName30 = ref('')
 const fileName60 = ref('')
 const rawRows30 = ref([])
 const rawRows60 = ref([])
+
+/** 左／右檔合併欄位後綴（如 _30、_10；檔名不必含此字串） */
+const mergeSuffixLeft = ref('_30')
+const mergeSuffixRight = ref('_60')
+
+/** 正規化後綴：一律 _開頭；空則用預設 */
+function normalizeMergeSuffixInput(raw, fallback) {
+  let t = String(raw ?? '').trim().replace(/\s/g, '')
+  if (!t) return fallback
+  if (!t.startsWith('_')) t = `_${t.replace(/^_+/, '')}`
+  return t || fallback
+}
+
+const mergeSuffixLeftNorm = computed(() => normalizeMergeSuffixInput(mergeSuffixLeft.value, '_30'))
+const mergeSuffixRightNorm = computed(() => normalizeMergeSuffixInput(mergeSuffixRight.value, '_60'))
 
 /** 與 OptimizedIndex `processData` 一致，供平均／中位／勝率使用 */
 function rowsToReturnTableData(rawRows) {
@@ -657,9 +730,13 @@ const sideStatsSummary = computed(() => {
 const mergedRows = computed(() => {
   if (!bothFilesReady.value) return []
 
-  const m30 = rowsToKeyedMap(rawRows30.value, '_30')
-  const m60 = rowsToKeyedMap(rawRows60.value, '_60')
-  const keys = [...new Set([...m30.keys(), ...m60.keys()])]
+  const sa = mergeSuffixLeftNorm.value
+  const sb = mergeSuffixRightNorm.value
+  if (sa === sb) return []
+
+  const mL = rowsToKeyedMap(rawRows30.value, sa)
+  const mR = rowsToKeyedMap(rawRows60.value, sb)
+  const keys = [...new Set([...mL.keys(), ...mR.keys()])]
 
   const emptySuffix = (suffix) => ({
     [`code${suffix}`]: '—',
@@ -671,28 +748,28 @@ const mergedRows = computed(() => {
   })
 
   const list = keys.map((k) => {
-    const a = m30.get(k)
-    const b = m60.get(k)
+    const a = mL.get(k)
+    const b = mR.get(k)
     const base = {
       productName: a?.productName || b?.productName || '',
       buyDay: a?.buyDay || b?.buyDay || '',
     }
-    const part30 = a || { ...base, ...emptySuffix('_30') }
-    const part60 = b || { ...base, ...emptySuffix('_60') }
+    const partL = a || { ...base, ...emptySuffix(sa) }
+    const partR = b || { ...base, ...emptySuffix(sb) }
     return {
       ...base,
-      code_30: part30.code_30,
-      code_60: part60.code_60,
-      buyPrice_30: part30.buyPrice_30,
-      buyPrice_60: part60.buyPrice_60,
-      sellDay_30: part30.sellDay_30,
-      sellDay_60: part60.sellDay_60,
-      sellPrice_30: part30.sellPrice_30,
-      sellPrice_60: part60.sellPrice_60,
-      holdingDays_30: part30.holdingDays_30,
-      holdingDays_60: part60.holdingDays_60,
-      return_30: part30.return_30,
-      return_60: part60.return_60,
+      [`code${sa}`]: partL[`code${sa}`],
+      [`code${sb}`]: partR[`code${sb}`],
+      [`buyPrice${sa}`]: partL[`buyPrice${sa}`],
+      [`buyPrice${sb}`]: partR[`buyPrice${sb}`],
+      [`sellDay${sa}`]: partL[`sellDay${sa}`],
+      [`sellDay${sb}`]: partR[`sellDay${sb}`],
+      [`sellPrice${sa}`]: partL[`sellPrice${sa}`],
+      [`sellPrice${sb}`]: partR[`sellPrice${sb}`],
+      [`holdingDays${sa}`]: partL[`holdingDays${sa}`],
+      [`holdingDays${sb}`]: partR[`holdingDays${sb}`],
+      [`return${sa}`]: partL[`return${sa}`],
+      [`return${sb}`]: partR[`return${sb}`],
     }
   })
   list.sort((x, y) => {
@@ -704,25 +781,32 @@ const mergedRows = computed(() => {
   return list
 })
 
-/** 政策模擬用持池：雙邊報酬可解析且 _30/_60 出場日有效 */
+/** 政策模擬用持池：左檔＝短天期邏輯（r30／sellDay30…）、右檔＝長天期；雙邊出場日與報酬須有效 */
 const policyTradeRows = computed(() => {
   const out = []
+  const sa = mergeSuffixLeftNorm.value
+  const sb = mergeSuffixRightNorm.value
+  if (sa === sb) return out
   for (const row of mergedRows.value) {
-    if (!sellDayValid(row.sellDay_30) || !sellDayValid(row.sellDay_60)) continue
-    const r30 = parseReturnNum(row.return_30)
-    const r60 = parseReturnNum(row.return_60)
+    const sellL = row[`sellDay${sa}`]
+    const sellR = row[`sellDay${sb}`]
+    if (!sellDayValid(sellL) || !sellDayValid(sellR)) continue
+    const r30 = parseReturnNum(row[`return${sa}`])
+    const r60 = parseReturnNum(row[`return${sb}`])
     if (r30 == null || r60 == null) continue
-    const buyPrice30 = parseFloat(String(row.buyPrice_30 ?? '').replace(/,/g, ''))
-    const sellPrice60 = parseFloat(String(row.sellPrice_60 ?? '').replace(/,/g, ''))
+    const buyPrice30 = parseFloat(String(row[`buyPrice${sa}`] ?? '').replace(/,/g, ''))
+    const sellPrice30 = parseFloat(String(row[`sellPrice${sa}`] ?? '').replace(/,/g, ''))
+    const sellPrice60 = parseFloat(String(row[`sellPrice${sb}`] ?? '').replace(/,/g, ''))
     out.push({
       name: row.productName,
-      code: row.code_30 || row.code_60 || '',
+      code: row[`code${sa}`] || row[`code${sb}`] || '',
       buyDay: row.buyDay,
-      sellDay30: row.sellDay_30,
-      sellDay60: row.sellDay_60,
+      sellDay30: sellL,
+      sellDay60: sellR,
       r30,
       r60,
       buyPrice30: Number.isFinite(buyPrice30) ? buyPrice30 : NaN,
+      sellPrice30: Number.isFinite(sellPrice30) ? sellPrice30 : NaN,
       sellPrice60: Number.isFinite(sellPrice60) ? sellPrice60 : NaN,
     })
   }
@@ -731,10 +815,133 @@ const policyTradeRows = computed(() => {
 
 const policyInitialCapital = ref(10000)
 const policyMaxPositions = ref(10)
-const policyIsRepeat = ref(true)
+const policyIsRepeat = ref(false)
 const policyDayBuyRepeat = ref(true)
 const policyConsoleTrace = ref(true)
 const policySimResult = ref(null)
+
+const policyChartAssetRef = ref(null)
+const policyChartReturnRef = ref(null)
+
+function disposePolicyCharts() {
+  const a = policyChartAssetRef.value
+  const b = policyChartReturnRef.value
+  if (a) {
+    const inst = echarts.getInstanceByDom(a)
+    if (inst) inst.dispose()
+  }
+  if (b) {
+    const inst = echarts.getInstanceByDom(b)
+    if (inst) inst.dispose()
+  }
+}
+
+function resizePolicyCharts() {
+  const a = policyChartAssetRef.value && echarts.getInstanceByDom(policyChartAssetRef.value)
+  const b = policyChartReturnRef.value && echarts.getInstanceByDom(policyChartReturnRef.value)
+  a?.resize()
+  b?.resize()
+}
+
+/** 與 OptimizedIndex buildChart6 概念一致：現金、持倉成本（淨值−現金）、總資產 */
+function buildPolicyAssetChart(history) {
+  const el = policyChartAssetRef.value
+  if (!el || el.clientWidth === 0 || !history?.length) return
+  let chart = echarts.getInstanceByDom(el)
+  if (!chart) chart = echarts.init(el)
+  const dates = history.map((h) => h.date)
+  const capital = history.map((h) => parseFloat(h.capital))
+  const netAsset = history.map((h) => parseFloat(h.netAsset))
+  const positionCost = history.map((h) => {
+    const n = parseFloat(h.netAsset)
+    const c = parseFloat(h.capital)
+    return Number.isFinite(n) && Number.isFinite(c) ? n - c : 0
+  })
+  chart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      formatter(params) {
+        const i = params[0].dataIndex
+        const d = history[i]
+        return `日期：${d.date}<br/>現金：$${Number(d.capital).toFixed(2)}<br/>持倉成本：$${positionCost[i].toFixed(2)}<br/>總資產：$${Number(d.netAsset).toFixed(2)}<br/>累積報酬率：${Number(d.returnRate).toFixed(2)}%`
+      },
+    },
+    legend: { data: ['現金', '持倉成本', '總資產'] },
+    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+    xAxis: { type: 'category', data: dates, axisLabel: { rotate: 45 } },
+    yAxis: { type: 'value', name: '金額（元）' },
+    series: [
+      { name: '現金', type: 'line', data: capital },
+      { name: '持倉成本', type: 'line', data: positionCost },
+      { name: '總資產', type: 'line', data: netAsset },
+    ],
+  })
+}
+
+/** 與 OptimizedIndex buildChart 相同：5% 一組的 r60 直方圖（小數轉％） */
+function buildPolicyReturnDistChart(tradeRows) {
+  const el = policyChartReturnRef.value
+  if (!el || el.clientWidth === 0) return
+  let chart = echarts.getInstanceByDom(el)
+  if (!chart) chart = echarts.init(el)
+  const returns = tradeRows
+    .map((t) => t.r60)
+    .filter((r) => typeof r === 'number' && Number.isFinite(r))
+    .map((r) => r * 100)
+  if (!returns.length) {
+    chart.setOption({
+      title: {
+        text: '無有效 r60',
+        left: 'center',
+        top: 'middle',
+        textStyle: { color: 'var(--el-text-color-secondary)', fontSize: 14 },
+      },
+      xAxis: { type: 'category', data: [] },
+      yAxis: { type: 'value' },
+      series: [{ type: 'bar', data: [] }],
+    })
+    return
+  }
+  const binWidth = 5
+  const min = Math.floor(Math.min(...returns) / binWidth) * binWidth
+  const max = Math.ceil(Math.max(...returns) / binWidth) * binWidth
+  const labels = []
+  const bins = []
+  for (let i = min; i < max; i += binWidth) {
+    const from = i
+    const to = i + binWidth
+    labels.push(`${from}~${to}%`)
+    bins.push(returns.filter((r) => r >= from && r < to).length)
+  }
+  chart.setOption({
+    title: { text: '' },
+    tooltip: { trigger: 'axis' },
+    grid: { left: '3%', right: '4%', bottom: '12%', containLabel: true },
+    xAxis: { type: 'category', name: '報酬區間', data: labels, axisLabel: { rotate: 45 } },
+    yAxis: { type: 'value', name: '筆數' },
+    series: [{ type: 'bar', name: '出現次數', data: bins }],
+  })
+}
+
+watch(policySimResult, async (res) => {
+  await nextTick()
+  if (!res?.history?.length) {
+    disposePolicyCharts()
+    return
+  }
+  buildPolicyAssetChart(res.history)
+  buildPolicyReturnDistChart(policyTradeRows.value)
+  await nextTick()
+  resizePolicyCharts()
+})
+
+onMounted(() => {
+  window.addEventListener('resize', resizePolicyCharts)
+})
+onUnmounted(() => {
+  window.removeEventListener('resize', resizePolicyCharts)
+  disposePolicyCharts()
+})
 
 function runPolicySimulation() {
   const rows = policyTradeRows.value
@@ -785,15 +992,24 @@ function fmtRatePct(pct) {
   return `${pct.toFixed(2)}%`
 }
 
+/** 政策模擬年度表：數值已為「％數字」（如 4.28 代表 4.28%） */
+function fmtPolicyPct(v) {
+  if (v == null || Number.isNaN(Number(v))) return '—'
+  return `${Number(v).toFixed(2)}%`
+}
+
 /**
  * 合併表雙邊皆可解析報酬時，依 r30 正 / 負 / 零 分組的條件統計
  */
 const groupedReturnStats = computed(() => {
   if (!bothFilesReady.value) return null
+  const sa = mergeSuffixLeftNorm.value
+  const sb = mergeSuffixRightNorm.value
+  if (sa === sb) return null
   const pairs = []
   for (const row of mergedRows.value) {
-    const r30 = parseReturnNum(row.return_30)
-    const r60 = parseReturnNum(row.return_60)
+    const r30 = parseReturnNum(row[`return${sa}`])
+    const r60 = parseReturnNum(row[`return${sb}`])
     if (r30 == null || r60 == null) continue
     pairs.push({ r30, r60, delta: r60 - r30 })
   }
@@ -897,7 +1113,7 @@ const groupedReturnStats = computed(() => {
 const mergeHint = ref('')
 const mergeHintType = ref('info')
 
-watch([rawRows30, rawRows60], () => {
+watch([rawRows30, rawRows60, mergeSuffixLeftNorm, mergeSuffixRightNorm], () => {
   const n30 = rawRows30.value.length
   const n60 = rawRows60.value.length
   if (!n30 && !n60) {
@@ -910,20 +1126,27 @@ watch([rawRows30, rawRows60], () => {
     mergeHintType.value = 'warning'
     return
   }
-  const m30 = rowsToKeyedMap(rawRows30.value, '_30')
-  const m60 = rowsToKeyedMap(rawRows60.value, '_60')
-  const keys = new Set([...m30.keys(), ...m60.keys()])
-  let only30 = 0
-  let only60 = 0
+  const sa = mergeSuffixLeftNorm.value
+  const sb = mergeSuffixRightNorm.value
+  if (sa === sb) {
+    mergeHint.value = `左、右合併後綴不可相同（目前皆為 ${sa}），請修改後綴再檢視合併結果。`
+    mergeHintType.value = 'error'
+    return
+  }
+  const mL = rowsToKeyedMap(rawRows30.value, sa)
+  const mR = rowsToKeyedMap(rawRows60.value, sb)
+  const keys = new Set([...mL.keys(), ...mR.keys()])
+  let onlyL = 0
+  let onlyR = 0
   let both = 0
   for (const k of keys) {
-    const a = m30.has(k)
-    const b = m60.has(k)
+    const a = mL.has(k)
+    const b = mR.has(k)
     if (a && b) both += 1
-    else if (a) only30 += 1
-    else only60 += 1
+    else if (a) onlyL += 1
+    else onlyR += 1
   }
-  mergeHint.value = `已合併：共 ${keys.size} 列（雙檔皆有 ${both} 筆；僅 _30：${only30}；僅 _60：${only60}）。缺側欄位顯示「—」。`
+  mergeHint.value = `已合併：共 ${keys.size} 列（雙檔皆有 ${both} 筆；僅左檔（${sa}）：${onlyL}；僅右檔（${sb}）：${onlyR}）。缺側欄位顯示「—」。`
   mergeHintType.value = 'success'
 })
 
@@ -934,10 +1157,10 @@ async function onFile30(ev) {
     const data = await parseCSV(file)
     rawRows30.value = data
     fileName30.value = file.name
-    ElMessage.success(`已載入 _30：${file.name}（${data.length} 列）`)
+    ElMessage.success(`已載入左檔：${file.name}（${data.length} 列）`)
   } catch (e) {
     console.error(e)
-    ElMessage.error('CSV（_30）解析失敗')
+    ElMessage.error('CSV（左檔）解析失敗')
     rawRows30.value = []
     fileName30.value = ''
   }
@@ -951,10 +1174,10 @@ async function onFile60(ev) {
     const data = await parseCSV(file)
     rawRows60.value = data
     fileName60.value = file.name
-    ElMessage.success(`已載入 _60：${file.name}（${data.length} 列）`)
+    ElMessage.success(`已載入右檔：${file.name}（${data.length} 列）`)
   } catch (e) {
     console.error(e)
-    ElMessage.error('CSV（_60）解析失敗')
+    ElMessage.error('CSV（右檔）解析失敗')
     rawRows60.value = []
     fileName60.value = ''
   }
@@ -1026,6 +1249,16 @@ function returnClass(raw) {
 
 .file-tag {
   margin-right: 8px;
+}
+
+.suffix-input {
+  max-width: 160px;
+}
+
+.suffix-hint {
+  display: block;
+  margin-top: 6px;
+  line-height: 1.4;
 }
 
 .merge-hint {
@@ -1144,5 +1377,42 @@ function returnClass(raw) {
 
 .policy-sim__result {
   margin-top: 12px;
+}
+
+.policy-sim__annual-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.5;
+  margin: 12px 0 8px;
+}
+
+.policy-sim__annual-table {
+  width: 100%;
+}
+
+.policy-sim__charts {
+  margin-top: 20px;
+}
+
+.policy-sim__chart-wrapper {
+  margin-bottom: 24px;
+  padding: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-bg-color);
+}
+
+.policy-sim__chart-title {
+  margin: 0 0 12px;
+  padding-left: 10px;
+  border-left: 4px solid var(--el-color-primary);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.policy-sim__chart {
+  width: 100%;
+  height: 420px;
 }
 </style>
