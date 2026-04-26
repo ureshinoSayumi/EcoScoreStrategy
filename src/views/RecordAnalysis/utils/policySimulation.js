@@ -203,6 +203,7 @@ function logPolicySimBacktestDetail(payload) {
 export function calculatePolicyPyramidSimulation(tradeRows, opts = {}) {
   const initialCapital = opts.initialCapital ?? 10000
   const maxPositions = opts.maxPositions ?? 10
+  const maxSpecialSlots = Math.max(0, Math.floor(opts.maxSpecialSlots ?? maxPositions))
   const isRepeat = opts.isRepeat !== false
   const dayBuyRepeat = opts.dayBuyRepeat !== false
   const trace = opts.trace !== false
@@ -422,6 +423,11 @@ export function calculatePolicyPyramidSimulation(tradeRows, opts = {}) {
           sourceR30: pos.r30,
           amount: proceeds,
         })
+        let queuedAsSpecial = true
+        if (pendingSpecialSlots.length > maxSpecialSlots) {
+          pendingSpecialSlots.pop()
+          queuedAsSpecial = false
+        }
         timeline.push({
           date: dateStr,
           type: 'STOP_30',
@@ -430,6 +436,8 @@ export function calculatePolicyPyramidSimulation(tradeRows, opts = {}) {
           sellDay30: pos.sellDay30,
           r30: pos.r30,
           proceeds: Math.round(proceeds * 100) / 100,
+          queuedAsSpecial,
+          maxSpecialSlots,
           pendingSpecialQueueLen: pendingSpecialSlots.length,
           capitalAfter: Math.round(capital * 100) / 100,
         })

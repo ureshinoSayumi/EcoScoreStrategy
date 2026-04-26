@@ -400,7 +400,7 @@
             </div>
           </template>
           <p class="policy-sim__rules">
-            最多持有 {{ policyMaxPositions }} 檔（可調整）。滿 30 天若 r<sub>30</sub>&lt;0 則賣出，釋出之「特殊空位」不買選股池，該筆資金均分加碼到當日已滿 30 天且
+            最多持有 {{ policyMaxPositions }} 檔（可調整），特殊空位上限 {{ policyMaxSpecialSlots }} 格。滿 30 天若 r<sub>30</sub>&lt;0 則賣出，釋出之「特殊空位」不買選股池，該筆資金均分加碼到當日已滿 30 天且
             r<sub>30</sub>&gt;0 的持倉；加碼視為在 30 天價位投入，60 天出場時以 sellPrice<sub>60</sub>/sellPrice<sub>30</sub> 比例一併了結（缺價時以報酬率換算）。60
             天正常到期賣出後空位可再買持池。r<sub>30</sub>=0 不視為停損。執行模擬後若開啟「Console 時間軸」，請打開開發者工具 Console 檢視逐日事件。
           </p>
@@ -410,6 +410,9 @@
             </el-form-item>
             <el-form-item label="最多檔數">
               <el-input-number v-model="policyMaxPositions" :min="1" :max="50" controls-position="right" />
+            </el-form-item>
+            <el-form-item label="特殊空位上限">
+              <el-input-number v-model="policyMaxSpecialSlots" :min="0" :max="50" controls-position="right" />
             </el-form-item>
             <el-form-item label="允許重複標的">
               <el-switch v-model="policyIsRepeat" />
@@ -815,6 +818,7 @@ const policyTradeRows = computed(() => {
 
 const policyInitialCapital = ref(10000)
 const policyMaxPositions = ref(10)
+const policyMaxSpecialSlots = ref(10)
 const policyIsRepeat = ref(false)
 const policyDayBuyRepeat = ref(true)
 const policyConsoleTrace = ref(true)
@@ -953,6 +957,7 @@ function runPolicySimulation() {
   policySimResult.value = calculatePolicyPyramidSimulation(rows, {
     initialCapital: policyInitialCapital.value,
     maxPositions: policyMaxPositions.value,
+    maxSpecialSlots: policyMaxSpecialSlots.value,
     isRepeat: policyIsRepeat.value,
     dayBuyRepeat: policyDayBuyRepeat.value,
     trace: policyConsoleTrace.value,
