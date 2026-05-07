@@ -43,6 +43,11 @@ const router = createRouter({
       name: 'statAnalysis',
       component: () => import('@/views/RecordAnalysis/StatAnalysisView.vue'),
     },
+    {
+      path: '/multiStrategyCsvBacktest',
+      name: 'multiStrategyCsvBacktest',
+      component: () => import('@/views/RecordAnalysis/MultiStrategyCsvBacktestView.vue'),
+    },
     // 2倍作多槓桿型ETF，單筆買入 VS SMA200 策略
     {
       path: '/2xETFvsSMA200',
