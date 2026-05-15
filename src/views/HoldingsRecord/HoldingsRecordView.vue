@@ -16,6 +16,82 @@
         </div>
       </template>
 
+      <div
+        v-if="holdings.length"
+        class="tab-stats portfolio-all-stats"
+        role="region"
+        aria-label="全部策略合計統計"
+      >
+        <div class="portfolio-all-stats__title">全部策略（合計）</div>
+        <div class="tab-stats__grid">
+          <div class="tab-stats__cell">
+            <div class="tab-stats__label">總損益（元）</div>
+            <div :class="['tab-stats__value', pnlPercentClass(allStrategiesStats.totalDollarPnl)]">
+              {{ formatSignedNtDollar(allStrategiesStats.totalDollarPnl) }}
+            </div>
+          </div>
+          <div class="tab-stats__cell">
+            <div class="tab-stats__label">平均損益率</div>
+            <div :class="['tab-stats__value', pnlPercentClass(allStrategiesStats.avgPnlPercent)]">
+              {{ formatPnlPercent(allStrategiesStats.avgPnlPercent) }}
+            </div>
+          </div>
+          <div class="tab-stats__cell">
+            <div class="tab-stats__label">勝率</div>
+            <div class="tab-stats__value tab-stats__value--muted">
+              {{ formatWinRate(allStrategiesStats.winRate) }}
+            </div>
+          </div>
+          <div class="tab-stats__cell">
+            <div class="tab-stats__label">損益率中位數</div>
+            <div :class="['tab-stats__value', pnlPercentClass(allStrategiesStats.medianPnlPercent)]">
+              {{ formatPnlPercent(allStrategiesStats.medianPnlPercent) }}
+            </div>
+          </div>
+          <div class="tab-stats__cell">
+            <div class="tab-stats__label">總平均效率</div>
+            <div :class="['tab-stats__value', pnlPercentClass(allStrategiesStats.avgEfficiency)]">
+              {{ formatEfficiency(allStrategiesStats.avgEfficiency) }}
+            </div>
+          </div>
+        </div>
+        <el-text
+          v-if="
+            allStrategiesStats.sampleEfficiency > 0 &&
+            allStrategiesStats.sampleEfficiency < holdingsWithQuotes.length
+          "
+          type="info"
+          size="small"
+          class="tab-stats-note"
+        >
+          總平均效率僅含可計算「效率」之 {{ allStrategiesStats.sampleEfficiency }} 筆（另有
+          {{
+            holdingsWithQuotes.length - allStrategiesStats.sampleEfficiency
+          }}
+          筆因無持有天數或無損益率而未納入）
+        </el-text>
+        <el-text
+          v-if="
+            allStrategiesStats.samplePct < holdingsWithQuotes.length &&
+            allStrategiesStats.samplePct > 0
+          "
+          type="info"
+          size="small"
+          class="tab-stats-note"
+        >
+          合計統計僅含已取得行情之 {{ allStrategiesStats.samplePct }} 筆（全體持股共
+          {{ holdingsWithQuotes.length }} 筆）
+        </el-text>
+        <el-text
+          v-else-if="allStrategiesStats.samplePct === 0 && holdingsWithQuotes.length"
+          type="warning"
+          size="small"
+          class="tab-stats-note"
+        >
+          全體尚未取得行情；請更新上市／上櫃行情後可顯示合計統計。
+        </el-text>
+      </div>
+
       <el-tabs v-model="activeStrategyTab" type="border-card" class="strategy-tabs">
         <el-tab-pane
           v-for="tab in strategyTabs"
@@ -56,7 +132,28 @@
               {{ formatPnlPercent(activeTabStats.medianPnlPercent) }}
             </div>
           </div>
+          <div class="tab-stats__cell">
+            <div class="tab-stats__label">總平均效率</div>
+            <div :class="['tab-stats__value', pnlPercentClass(activeTabStats.avgEfficiency)]">
+              {{ formatEfficiency(activeTabStats.avgEfficiency) }}
+            </div>
+          </div>
         </div>
+        <el-text
+          v-if="
+            activeTabStats.sampleEfficiency > 0 &&
+            activeTabStats.sampleEfficiency < holdingsWithQuotesForTab.length
+          "
+          type="info"
+          size="small"
+          class="tab-stats-note"
+        >
+          總平均效率僅含本策略可計算「效率」之 {{ activeTabStats.sampleEfficiency }} 筆（另有
+          {{
+            holdingsWithQuotesForTab.length - activeTabStats.sampleEfficiency
+          }}
+          筆未納入）
+        </el-text>
         <el-text
           v-if="
             activeTabStats.samplePct < holdingsWithQuotesForTab.length &&
@@ -661,17 +758,17 @@ function medianOfNumbers(values) {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2
 }
 
-/** 目前分頁：總損益金額、平均／中位損益率、勝率（僅計有行情者） */
-const activeTabStats = computed(() => {
-  const rows = holdingsWithQuotesForTab.value
+function computeHoldingPnLStats(rows) {
   const pnlPercents = []
   const dollarPnls = []
+  const efficiencies = []
   let wins = 0
 
   for (const r of rows) {
     const pct = finiteNumber(r._pnlPercent)
     const mv = finiteNumber(r._marketValue)
     const cost = finiteNumber(r.buyCost)
+    const eff = finiteNumber(r._efficiency)
     if (pct != null) {
       pnlPercents.push(pct)
       if (pct > 0) wins += 1
@@ -679,23 +776,36 @@ const activeTabStats = computed(() => {
     if (mv != null && cost != null) {
       dollarPnls.push(mv - cost)
     }
+    if (eff != null) {
+      efficiencies.push(eff)
+    }
   }
 
   const nPct = pnlPercents.length
   const nDollar = dollarPnls.length
+  const nEff = efficiencies.length
   const avgPct = nPct ? pnlPercents.reduce((a, b) => a + b, 0) / nPct : null
   const totalDollar = nDollar ? dollarPnls.reduce((a, b) => a + b, 0) : null
   const winRate = nPct ? wins / nPct : null
+  const avgEff = nEff ? efficiencies.reduce((a, b) => a + b, 0) / nEff : null
 
   return {
     totalDollarPnl: totalDollar,
     avgPnlPercent: avgPct,
     medianPnlPercent: medianOfNumbers(pnlPercents),
     winRate,
+    avgEfficiency: avgEff,
     samplePct: nPct,
     sampleDollar: nDollar,
+    sampleEfficiency: nEff,
   }
-})
+}
+
+/** 全部策略持股合計（與各分頁計算規則相同，僅範圍為全體列） */
+const allStrategiesStats = computed(() => computeHoldingPnLStats(holdingsWithQuotes.value))
+
+/** 目前分頁：總損益金額、平均／中位損益率、勝率（僅計有行情者） */
+const activeTabStats = computed(() => computeHoldingPnLStats(holdingsWithQuotesForTab.value))
 
 function finiteNumber(val) {
   if (val == null || val === '') return null
@@ -850,6 +960,19 @@ function formatSignedNtDollar(val) {
 
 .strategy-tabs :deep(.el-tabs__header) {
   margin-bottom: 0;
+}
+
+.portfolio-all-stats {
+  margin-bottom: 14px;
+  border-style: dashed;
+}
+
+.portfolio-all-stats__title {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .tab-stats {
