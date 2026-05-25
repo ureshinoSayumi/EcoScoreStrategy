@@ -83,6 +83,9 @@
               <el-descriptions-item label="報酬中位數">{{ returnCard.medianReturn.toFixed(2) }}%</el-descriptions-item>
               <el-descriptions-item label="勝率">{{ returnCard.winRate.toFixed(2) }}%</el-descriptions-item>
               <el-descriptions-item label="夏普值">{{ returnCard.repeat.sharpeRatio.toFixed(4) }}</el-descriptions-item>
+              <el-descriptions-item label="期望值" :span="2">
+                {{ returnCard.expectedReturn.toFixed(2) }}%
+              </el-descriptions-item>
             </el-descriptions>
 
             <el-divider content-position="center">模擬回測詳情</el-divider>
@@ -126,6 +129,9 @@
               <el-descriptions-item label="報酬中位數">{{ returnCard.medianReturn.toFixed(2) }}%</el-descriptions-item>
               <el-descriptions-item label="勝率">{{ returnCard.winRate.toFixed(2) }}%</el-descriptions-item>
               <el-descriptions-item label="夏普值">{{ returnCard.noRepeat.sharpeRatio.toFixed(4) }}</el-descriptions-item>
+              <el-descriptions-item label="期望值" :span="2">
+                {{ returnCard.expectedReturn.toFixed(2) }}%
+              </el-descriptions-item>
             </el-descriptions>
 
             <el-divider content-position="center">模擬回測詳情</el-divider>
@@ -310,6 +316,8 @@ const returnCard = reactive({
   profitLossRatio: 0, // 平均賺賠比
   medianReturn: 0, // 報酬率中位數
   winRate: 0, // 勝率
+  /** 期望值（%/筆）：平均虧損幅度 × (勝率 × 賺賠比 − 虧損率)，與每筆平均報酬等價；虧損率為「賠筆數/總有效筆數」（非平手當成一賠時與網傳 WR−(1−W)一致） */
+  expectedReturn: 0,
   // 重複進場
   repeat: {
     totalReturn: 0, // 總報酬率
@@ -466,6 +474,37 @@ const winRateComputed = ((data) => {
   const winCount = returns.filter(r => r > 0).length
   return (winCount / returns.length) * 100
 })
+
+// 期望值（%/筆）=「平均虧損幅度 L」×「勝率(小數)×賺賠比 − 虧損率(小數)」，L 與 R 同上方面板定義；
+// 虧損率 = n賠/n。無平手時即 L × (W×R − (1−W))；有平手時用本式才與加權平均一致。
+const expectedReturnComputed = (data) => {
+  const returns = data.map((i) => parseFloat(i.return)).filter((r) => !isNaN(r))
+  const n = returns.length
+  if (n === 0) return 0
+  const profits = returns.filter((r) => r > 0)
+  const losses = returns.filter((r) => r < 0)
+  const nw = profits.length
+  const nl = losses.length
+  const avgProfit = nw ? profits.reduce((a, b) => a + b, 0) / nw : 0
+  const avgLoss = nl ? losses.reduce((a, b) => a + b, 0) / nl : 0 // 負值
+  if (nw === 0 && nl === 0) return 0 // 全都 r===0
+
+  const Lmag = nl ? Math.abs(avgLoss) : 0
+  const Wdec = nw / n
+  const pLossDec = nl / n
+
+  let evDecimal
+  if (!nl) {
+    // 無賠筆時 L×（勝率×R−虧損率）不適用（R/L 未定義）；期望為「獲利的加權平均」
+    evDecimal = Wdec * avgProfit
+  } else if (!nw) {
+    evDecimal = pLossDec * avgLoss
+  } else {
+    const R = avgProfit / Lmag
+    evDecimal = Lmag * (Wdec * R - pLossDec)
+  }
+  return evDecimal * 100
+}
 
 // 計算夏普值
 // data: 歷史資料
@@ -642,6 +681,7 @@ const dataAnalysisSingle2 = (data) => {
   returnCard.profitLossRatio = profitLossRatioComputed(data)
   returnCard.medianReturn = medianReturnComputed(data)
   returnCard.winRate = winRateComputed(data)
+  returnCard.expectedReturn = expectedReturnComputed(data)
 
   // Update Visual Data
   visData.data = data;
@@ -722,6 +762,7 @@ const dataAnalysisSingle = (data) => {
   returnCard.profitLossRatio = profitLossRatioComputed(data)
   returnCard.medianReturn = medianReturnComputed(data)
   returnCard.winRate = winRateComputed(data)
+  returnCard.expectedReturn = expectedReturnComputed(data)
 
   // 更新視覺化數據
   visData.data = data;
