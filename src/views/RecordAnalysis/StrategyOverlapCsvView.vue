@@ -87,15 +87,91 @@
         max-height="560"
       >
         <el-table-column
-          v-for="col in previewHoldingColumns"
-          :key="col"
-          :prop="col"
-          :label="col"
-          :min-width="
-            col === PAIRED_60_RETURN_LABEL ? 130 : col === '報酬率' ? 110 : 100
-          "
+          prop="商品名稱"
+          label="商品名稱"
+          min-width="120"
           sortable
-          :sort-method="(a, b) => comparePreviewRows(a, b, col)"
+          :sort-method="(a, b) => comparePreviewRows(a, b, '商品名稱')"
+          show-overflow-tooltip
+        />
+        <el-table-column
+          prop="商品代碼"
+          label="商品代碼"
+          min-width="100"
+          sortable
+          :sort-method="(a, b) => comparePreviewRows(a, b, '商品代碼')"
+          show-overflow-tooltip
+        />
+        <el-table-column
+          prop="進場時間"
+          label="進場時間"
+          min-width="118"
+          sortable
+          :sort-method="(a, b) => comparePreviewRows(a, b, '進場時間')"
+          show-overflow-tooltip
+        />
+        <el-table-column
+          prop="進場方向"
+          label="進場方向"
+          min-width="88"
+          sortable
+          :sort-method="(a, b) => comparePreviewRows(a, b, '進場方向')"
+          show-overflow-tooltip
+        />
+        <el-table-column
+          prop="進場價格"
+          label="進場價格"
+          min-width="96"
+          sortable
+          :sort-method="(a, b) => comparePreviewRows(a, b, '進場價格')"
+          show-overflow-tooltip
+        />
+        <el-table-column
+          prop="出場時間"
+          label="出場時間"
+          min-width="118"
+          sortable
+          :sort-method="(a, b) => comparePreviewRows(a, b, '出場時間')"
+          show-overflow-tooltip
+        />
+        <el-table-column
+          prop="出場價格"
+          label="出場價格"
+          min-width="96"
+          sortable
+          :sort-method="(a, b) => comparePreviewRows(a, b, '出場價格')"
+          show-overflow-tooltip
+        />
+        <el-table-column
+          prop="持有區間"
+          label="持有區間"
+          min-width="94"
+          sortable
+          :sort-method="(a, b) => comparePreviewRows(a, b, '持有區間')"
+          show-overflow-tooltip
+        />
+        <el-table-column
+          prop="報酬率"
+          label="報酬率"
+          min-width="110"
+          sortable
+          :sort-method="(a, b) => comparePreviewRows(a, b, '報酬率')"
+          show-overflow-tooltip
+        />
+        <el-table-column
+          prop="約60天報酬率"
+          label="約60天報酬率"
+          min-width="130"
+          sortable
+          :sort-method="(a, b) => comparePreviewRows(a, b, '約60天報酬率')"
+          show-overflow-tooltip
+        />
+        <el-table-column
+          prop="報酬差(>60−約60)"
+          label="報酬差(>60−約60)"
+          min-width="146"
+          sortable
+          :sort-method="(a, b) => comparePreviewRows(a, b, '報酬差(>60−約60)')"
           show-overflow-tooltip
         />
       </el-table>
@@ -130,14 +206,44 @@ const fileName2 = ref('')
 const rawRows1 = ref([])
 const rawRows2 = ref([])
 
-/** 預覽表格加掛欄：同進場配對之「只持有約60天」報酬（顯示用％） */
-const PAIRED_60_RETURN_LABEL = '約60天報酬率'
+/** 預覽表格固定欄（與常見 XQ 匯出欄對齊）；「約60天報酬率」「報酬差(>60−約60)」為預覽加算的欄位 */
+const PREVIEW_TABLE_COL_ORDER = [
+  '序號',
+  '商品名稱',
+  '商品代碼',
+  '進場時間',
+  '進場方向',
+  '進場價格',
+  '出場時間',
+  '出場方向',
+  '出場價格',
+  '持有區間',
+  '報酬率',
+  '約60天報酬率',
+  '報酬差(>60−約60)',
+  '訊息',
+]
 
 /** 報酬小數 → 與「約60天報酬率」同一格式：xx.xx% */
 function formatReturnPctCell(frac) {
   return frac == null || !Number.isFinite(frac)
     ? '—'
     : `${(frac * 100).toFixed(2)}%`
+}
+
+/** (>60 − 約60)，與報酬率欄同語意：Δ(％) */
+function formatReturnDiffPctPoints(retLong, ret60) {
+  if (
+    retLong == null ||
+    ret60 == null ||
+    !Number.isFinite(retLong) ||
+    !Number.isFinite(ret60)
+  ) {
+    return '—'
+  }
+  const pp = (retLong - ret60) * 100
+  const sign = pp === 0 || Object.is(pp, -0) ? '' : pp > 0 ? '+' : ''
+  return `${sign}${pp.toFixed(2)}%`
 }
 
 function cellStrForSort(v) {
@@ -148,7 +254,11 @@ function cellStrForSort(v) {
 
 function comparableForPreviewSort(col, row) {
   const s = cellStrForSort(row[col])
-  if (col === '報酬率' || col === PAIRED_60_RETURN_LABEL) {
+  if (
+    col === '報酬率' ||
+    col === '約60天報酬率' ||
+    col === '報酬差(>60−約60)'
+  ) {
     const m = s.replace(/%/g, '').trim()
     const n = parseFloat(m)
     return Number.isFinite(n)
@@ -235,14 +345,19 @@ function parseHoldingDays(raw) {
   return m ? parseFloat(m[0]) : Number.NEGATIVE_INFINITY
 }
 
-/** 報酬率轉成小數報酬（如 3%→0.03）；規則同重製版常見 CSV：約 |x|≤1.5 視為已是小數，否則視為％再除以100 */
+/** 報酬率轉成「報酬倍率」（顯示時再 ×100 為％）：
+ * - 典型 XQ CSV 為倍率小數：0.05≈5%、1.56≈+156%；只要 |x|≤1.5 即視為已是倍率；
+ * - 若為整數或大數且不帶小數尾巴：常見為「％數」匯出，如 15、156 → 視為 15%、156%，再除以 100；
+ * - 若有小數且 |x|>1.5：視為已是倍率（避免 1.56 被當成 156%數字而再除 100 變成 1.56%）。
+ */
 function parseReturnFraction(raw) {
   const t = String(raw ?? '').trim().replace(/%/g, '')
   if (!t) return null
   const v = parseFloat(t)
   if (!Number.isFinite(v)) return null
   if (Math.abs(v) <= 1.5) return v
-  return v / 100
+  if (Number.isInteger(v)) return v / 100
+  return v
 }
 
 function mean(arr) {
@@ -419,24 +534,15 @@ function buildExportHeadersFromRows(rows) {
   return [...PRIORITY_HEADERS.filter((h) => keySet.has(h)), ...rest]
 }
 
-const previewHoldingColumns = computed(() => {
-  const recs = holdingPairRecords.value
-  const baseCols =
-    recs.length > 0
-      ? buildExportHeadersFromRows(recs.map((p) => p.rLong))
-      : [...PRIORITY_HEADERS]
-  const merged = [...baseCols]
-  if (!merged.includes(PAIRED_60_RETURN_LABEL)) merged.push(PAIRED_60_RETURN_LABEL)
-  return merged
-})
-
 const previewHoldingRows = computed(() => {
-  const cols = previewHoldingColumns.value
+  const cols = PREVIEW_TABLE_COL_ORDER
   return holdingPairRecords.value.map((p) => {
     const row = {}
     for (const c of cols) {
-      if (c === PAIRED_60_RETURN_LABEL) {
+      if (c === '約60天報酬率') {
         row[c] = formatReturnPctCell(p.ret60)
+      } else if (c === '報酬差(>60−約60)') {
+        row[c] = formatReturnDiffPctPoints(p.retLong, p.ret60)
       } else if (c === '報酬率') {
         row[c] = formatReturnPctCell(p.retLong)
       } else {

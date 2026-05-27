@@ -455,7 +455,7 @@ const medianReturnComputed = ((data) => {
     .sort((a, b) => a - b)  // 由小到大排序
 
   const len = returns.length
-  if (len === 0) return 0
+  if (len === 0) return
   if (len % 2 === 1) {
     // 奇數筆：回傳中間那筆
     return returns[Math.floor(len / 2)] * 100
