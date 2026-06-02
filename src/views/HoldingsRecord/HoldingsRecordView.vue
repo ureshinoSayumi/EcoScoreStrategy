@@ -54,7 +54,25 @@
               {{ formatEfficiency(allStrategiesStats.avgEfficiency) }}
             </div>
           </div>
+          <div class="tab-stats__cell">
+            <div class="tab-stats__label">總市值</div>
+            <div class="tab-stats__value tab-stats__value--muted">
+              {{ formatNtMarketValue(allStrategiesStats.totalMarketValue) }}
+            </div>
+          </div>
         </div>
+        <el-text
+          v-if="
+            allStrategiesStats.sampleMv > 0 &&
+            allStrategiesStats.sampleMv < holdingsWithQuotes.length
+          "
+          type="info"
+          size="small"
+          class="tab-stats-note"
+        >
+          合計總市值僅加總已取得行情並可算出市值之
+          {{ allStrategiesStats.sampleMv }} 筆（持股共 {{ holdingsWithQuotes.length }} 筆）
+        </el-text>
         <el-text
           v-if="
             allStrategiesStats.sampleEfficiency > 0 &&
@@ -138,7 +156,25 @@
               {{ formatEfficiency(activeTabStats.avgEfficiency) }}
             </div>
           </div>
+          <div class="tab-stats__cell">
+            <div class="tab-stats__label">總市值</div>
+            <div class="tab-stats__value tab-stats__value--muted">
+              {{ formatNtMarketValue(activeTabStats.totalMarketValue) }}
+            </div>
+          </div>
         </div>
+        <el-text
+          v-if="
+            activeTabStats.sampleMv > 0 &&
+            activeTabStats.sampleMv < holdingsWithQuotesForTab.length
+          "
+          type="info"
+          size="small"
+          class="tab-stats-note"
+        >
+          本策略總市值僅加總已取得行情並可算出市值之
+          {{ activeTabStats.sampleMv }} 筆（共 {{ holdingsWithQuotesForTab.length }} 筆持股）
+        </el-text>
         <el-text
           v-if="
             activeTabStats.sampleEfficiency > 0 &&
@@ -761,6 +797,7 @@ function medianOfNumbers(values) {
 function computeHoldingPnLStats(rows) {
   const pnlPercents = []
   const dollarPnls = []
+  const marketValues = []
   const efficiencies = []
   let wins = 0
 
@@ -776,6 +813,9 @@ function computeHoldingPnLStats(rows) {
     if (mv != null && cost != null) {
       dollarPnls.push(mv - cost)
     }
+    if (mv != null) {
+      marketValues.push(mv)
+    }
     if (eff != null) {
       efficiencies.push(eff)
     }
@@ -783,20 +823,26 @@ function computeHoldingPnLStats(rows) {
 
   const nPct = pnlPercents.length
   const nDollar = dollarPnls.length
+  const nMv = marketValues.length
   const nEff = efficiencies.length
   const avgPct = nPct ? pnlPercents.reduce((a, b) => a + b, 0) / nPct : null
   const totalDollar = nDollar ? dollarPnls.reduce((a, b) => a + b, 0) : null
+  const totalMarketValue = nMv
+    ? marketValues.reduce((a, b) => a + b, 0)
+    : null
   const winRate = nPct ? wins / nPct : null
   const avgEff = nEff ? efficiencies.reduce((a, b) => a + b, 0) / nEff : null
 
   return {
     totalDollarPnl: totalDollar,
+    totalMarketValue,
     avgPnlPercent: avgPct,
     medianPnlPercent: medianOfNumbers(pnlPercents),
     winRate,
     avgEfficiency: avgEff,
     samplePct: nPct,
     sampleDollar: nDollar,
+    sampleMv: nMv,
     sampleEfficiency: nEff,
   }
 }
@@ -915,6 +961,12 @@ function formatSignedNtDollar(val) {
   const sign = n > 0 ? '+' : n < 0 ? '−' : ''
   const abs = Math.abs(Math.round(n))
   return `${sign}NT$${abs.toLocaleString('zh-TW')}`
+}
+
+/** 總市值彙總（與表格「市值」欄格式一致） */
+function formatNtMarketValue(val) {
+  if (val == null || Number.isNaN(val)) return '—'
+  return `NT$${formatNumber(val)}`
 }
 </script>
 
