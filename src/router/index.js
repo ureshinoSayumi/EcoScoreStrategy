@@ -32,6 +32,12 @@ const router = createRouter({
       name: 'batchCrawl',
       component: () => import('@/views/BatchCrawl/index.vue'),
     },
+    // SMA20 延伸持有分析
+    {
+      path: '/sma20HoldAnalysis',
+      name: 'sma20HoldAnalysis',
+      component: () => import('@/views/Sma20HoldAnalysis/index.vue'),
+    },
     // XQ 分析器
     {
       path: '/recordAnalysis',
