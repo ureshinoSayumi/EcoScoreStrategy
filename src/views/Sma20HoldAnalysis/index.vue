@@ -81,21 +81,61 @@
         <span>交易明細（{{ resultRows.length }} 筆）</span>
       </template>
       <el-table :data="resultRows" stripe max-height="560" size="small" border>
-        <el-table-column prop="name" label="商品名稱" min-width="100" show-overflow-tooltip />
-        <el-table-column prop="code" label="商品代碼" width="90" />
-        <el-table-column prop="buyDay" label="進場時間" width="110" />
-        <el-table-column prop="return60Pct" label="60天報酬%" width="100" align="right" />
-        <el-table-column prop="sma20ReturnPct" label="SMA20報酬%" width="110" align="right" />
-        <el-table-column prop="totalHoldDays" label="總持有天數" width="100" align="center" />
-        <el-table-column prop="exitSma20" label="出場日SMA20" width="110" align="right" />
-        <el-table-column prop="status" label="狀態" width="100">
+        <el-table-column
+          prop="name"
+          label="商品名稱"
+          min-width="100"
+          show-overflow-tooltip
+          sortable
+        />
+        <el-table-column prop="code" label="商品代碼" width="90" sortable />
+        <el-table-column prop="buyDay" label="進場時間" width="110" sortable />
+        <el-table-column prop="exitDay" label="出場日期" width="110" sortable />
+        <el-table-column
+          prop="return60Pct"
+          label="60天報酬%"
+          width="100"
+          align="right"
+          sortable
+          :sort-method="sortByReturn60"
+        />
+        <el-table-column
+          prop="sma20ReturnPct"
+          label="SMA20報酬%"
+          width="110"
+          align="right"
+          sortable
+          :sort-method="sortBySma20Return"
+        />
+        <el-table-column
+          prop="totalHoldDays"
+          label="總持有天數"
+          width="100"
+          align="center"
+          sortable
+        />
+        <el-table-column
+          prop="exitSma20"
+          label="出場日SMA20"
+          width="110"
+          align="right"
+          sortable
+          :sort-method="sortByExitSma20"
+        />
+        <el-table-column
+          prop="status"
+          label="狀態"
+          width="100"
+          sortable
+          :sort-method="sortByStatus"
+        >
           <template #default="{ row }">
             <el-tag v-if="row.extended" type="success" size="small">延伸</el-tag>
             <el-tag v-else-if="row.skippedNegative" type="info" size="small">60天</el-tag>
             <el-tag v-else type="warning" size="small">略過</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="note" label="備註" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="note" label="備註" min-width="160" show-overflow-tooltip sortable />
       </el-table>
     </el-card>
   </div>
@@ -213,6 +253,34 @@ const fmtPct = (dec) => {
   return `${(dec * 100).toFixed(2)}%`
 }
 
+/** 可排序數值：null / NaN 排到最後 */
+const sortNum = (a, b) => {
+  const na = a == null || Number.isNaN(a)
+  const nb = b == null || Number.isNaN(b)
+  if (na && nb) return 0
+  if (na) return 1
+  if (nb) return -1
+  return a - b
+}
+
+const sortByReturn60 = (a, b) => sortNum(a.returnDecimal, b.returnDecimal)
+const sortBySma20Return = (a, b) => sortNum(a.sma20Return, b.sma20Return)
+
+const sortByExitSma20 = (a, b) => {
+  const parse = (v) => (v === '—' || v == null ? null : Number(v))
+  return sortNum(parse(a.exitSma20), parse(b.exitSma20))
+}
+
+/** 狀態排序：延伸 → 60天 → 略過 */
+const sortByStatus = (a, b) => {
+  const rank = (row) => {
+    if (row.extended) return 0
+    if (row.skippedNegative) return 1
+    return 2
+  }
+  return rank(a) - rank(b)
+}
+
 /**
  * 主流程：預載股價（顯示進度條）→ 逐筆計算 SMA20 延伸出場 → 統計與表格一次更新
  */
@@ -259,6 +327,7 @@ const runAnalysis = async () => {
         name: trade.name,
         code: trade.code,
         buyDay: trade.buyDay,
+        exitDay: trade.sellDay || '—',
         return60Pct: fmtPct(trade.returnDecimal),
         sma20ReturnPct: '—',
         totalHoldDays: BASE_HOLD_DAYS,
@@ -327,6 +396,7 @@ const runAnalysis = async () => {
         }
 
         row.extended = ext.extended
+        row.exitDay = ext.exitDay || trade.sellDay || '—'
         row.sma20Return = ext.sma20Return
         row.returnDecimal = trade.returnDecimal
         row.sma20ReturnPct = fmtPct(ext.sma20Return)
