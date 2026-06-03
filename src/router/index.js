@@ -38,6 +38,12 @@ const router = createRouter({
       name: 'sma20HoldAnalysis',
       component: () => import('@/views/Sma20HoldAnalysis/index.vue'),
     },
+    // 股票日線走勢圖（K 線 + SMA20）
+    {
+      path: '/stockPriceChart',
+      name: 'stockPriceChart',
+      component: () => import('@/views/StockPriceChart/index.vue'),
+    },
     // XQ 分析器
     {
       path: '/recordAnalysis',

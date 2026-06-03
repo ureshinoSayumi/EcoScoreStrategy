@@ -44,6 +44,7 @@ const routeItems = computed(() => {
     fetchStock: '取得股票資料',
     batchCrawl: '批次爬取 FinMind 日線',
     sma20HoldAnalysis: 'SMA20 延伸持有分析',
+    stockPriceChart: '股票日線走勢圖',
     recordAnalysis: 'XQ 分析器',
     optimizedIndex: 'XQ 分析器 重製版',
     statAnalysis: '統計分析（雙 CSV 合併）',
