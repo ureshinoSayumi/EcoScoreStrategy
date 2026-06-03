@@ -42,6 +42,7 @@ const routeItems = computed(() => {
     ecoScore: '景氣循環投資法',
     technicalAnalysis: '技術分析投資法',
     fetchStock: '取得股票資料',
+    batchCrawl: '批次爬取 FinMind 日線',
     recordAnalysis: 'XQ 分析器',
     optimizedIndex: 'XQ 分析器 重製版',
     statAnalysis: '統計分析（雙 CSV 合併）',

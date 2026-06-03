@@ -26,6 +26,12 @@ const router = createRouter({
       name: 'fetchStock',
       component: () => import('@/views/ApiGet/index.vue'),
     },
+    // 批次爬取 FinMind 日線
+    {
+      path: '/batchCrawl',
+      name: 'batchCrawl',
+      component: () => import('@/views/BatchCrawl/index.vue'),
+    },
     // XQ 分析器
     {
       path: '/recordAnalysis',
