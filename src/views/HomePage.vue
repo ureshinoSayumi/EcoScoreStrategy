@@ -47,6 +47,7 @@ const routeItems = computed(() => {
     stockPriceChart: '股票日線走勢圖',
     recordAnalysis: 'XQ 分析器',
     optimizedIndex: 'XQ 分析器 重製版',
+    sma20PyramidBacktest: 'SMA20 延伸加碼回測',
     statAnalysis: '統計分析（雙 CSV 合併）',
     multiStrategyCsvBacktest: '多策略 CSV 回測（持股均分）',
     strategyOverlapCsv: '雙策略 CSV 重疊篩選',

@@ -2,10 +2,53 @@
   <div class="sma20-hold">
     <el-card shadow="hover" class="panel">
       <template #header>
-        <span>SMA20 延伸持有分析（60 天後）</span>
+        <span>SMA 延伸持有分析（{{ strategyParams.baseHoldDays }} 天後）</span>
       </template>
 
-      <el-form label-width="100px">
+      <el-form label-width="120px">
+        <el-divider content-position="left">策略參數</el-divider>
+        <el-form-item label="基礎持有天數">
+          <el-input-number
+            v-model="strategyParams.baseHoldDays"
+            :min="1"
+            :max="500"
+            :disabled="dbLoading || computing"
+          />
+          <span class="field-hint">CSV 原策略固定出場天數</span>
+        </el-form-item>
+        <el-form-item label="均線週期">
+          <el-input-number
+            v-model="strategyParams.smaPeriod"
+            :min="2"
+            :max="250"
+            :disabled="dbLoading || computing"
+          />
+          <span class="field-hint">例如 20 即 SMA20</span>
+        </el-form-item>
+        <el-form-item label="連續破線天數">
+          <el-input-number
+            v-model="strategyParams.consecutiveBelow"
+            :min="1"
+            :max="30"
+            :disabled="dbLoading || computing"
+          />
+          <span class="field-hint">收盤低於均線連續幾日出場</span>
+        </el-form-item>
+        <el-form-item label="延伸門檻 %">
+          <el-input-number
+            v-model="strategyParams.smaEntryPremiumPct"
+            :min="0"
+            :max="100"
+            :precision="1"
+            :step="1"
+            :disabled="dbLoading || computing"
+          />
+          <span class="field-hint">
+            基礎出場日收盤須高於 SMA{{ strategyParams.smaPeriod }} 此 %（0 = 僅需高於均線）
+          </span>
+        </el-form-item>
+
+        <el-divider content-position="left">資料上傳</el-divider>
         <el-form-item label="CSV 上傳">
           <input
             type="file"
@@ -53,34 +96,37 @@
         </p>
       </div>
       <p v-if="computing && !dbLoading" class="computing-hint">計算中…</p>
-      <p v-if="cacheStats.cachedStocks" class="cache-stats">
+      <p
+        v-if="cacheStats.cachedStocks || cacheStats.dbQueries || cacheStats.dbNoPriceData"
+        class="cache-stats"
+      >
         快取：{{ cacheStats.cachedStocks }} 檔標的 · DB 查詢 {{ cacheStats.dbQueries }} 次 ·
-        快取命中 {{ cacheStats.cacheHits }} 次
+        快取命中 {{ cacheStats.cacheHits }} 次 · 無股價資料 {{ cacheStats.dbNoPriceData }} 次
       </p>
     </el-card>
 
     <el-card v-if="analysis.extendedCount > 0 || resultRows.length" shadow="hover" class="panel">
       <template #header>
-        <span>統計（僅持有超過 60 天、有 SMA20 出場者）</span>
+        <span>統計（僅持有超過 {{ strategyParams.baseHoldDays }} 天、有 SMA 出場者）</span>
       </template>
       <el-descriptions :column="1" border>
         <el-descriptions-item label="延伸持有筆數">
           {{ analysis.extendedCount }}
         </el-descriptions-item>
-        <el-descriptions-item label="SMA20 報酬高於 60 天出場">
+        <el-descriptions-item :label="`SMA${strategyParams.smaPeriod} 報酬高於 ${strategyParams.baseHoldDays} 天出場`">
           {{ analysis.beat60Pct.toFixed(2) }}%
         </el-descriptions-item>
-        <el-descriptions-item label="平均高出 60 天出場">
+        <el-descriptions-item :label="`平均高出 ${strategyParams.baseHoldDays} 天出場`">
           {{ analysis.avgBeat60Pct >= 0 ? '+' : '' }}{{ analysis.avgBeat60Pct.toFixed(2) }} 個百分點
         </el-descriptions-item>
       </el-descriptions>
     </el-card>
 
-    <el-card v-if="resultRows.length" shadow="hover" class="panel">
+    <el-card v-if="extendedTableRows.length" shadow="hover" class="panel">
       <template #header>
-        <span>交易明細（{{ resultRows.length }} 筆）</span>
+        <span>交易明細（{{ extendedTableRows.length }} 筆，僅延伸持有）</span>
       </template>
-      <el-table :data="resultRows" stripe max-height="560" size="small" border>
+      <el-table :data="extendedTableRows" stripe max-height="560" size="small" border>
         <el-table-column
           prop="name"
           label="商品名稱"
@@ -93,7 +139,7 @@
         <el-table-column prop="exitDay" label="出場日期" width="110" sortable />
         <el-table-column
           prop="return60Pct"
-          label="60天報酬%"
+          :label="`${strategyParams.baseHoldDays}天報酬%`"
           width="100"
           align="right"
           sortable
@@ -101,7 +147,7 @@
         />
         <el-table-column
           prop="sma20ReturnPct"
-          label="SMA20報酬%"
+          :label="`SMA${strategyParams.smaPeriod}報酬%`"
           width="110"
           align="right"
           sortable
@@ -116,7 +162,7 @@
         />
         <el-table-column
           prop="exitSma20"
-          label="出場日SMA20"
+          :label="`出場日SMA${strategyParams.smaPeriod}`"
           width="110"
           align="right"
           sortable
@@ -131,7 +177,10 @@
         >
           <template #default="{ row }">
             <el-tag v-if="row.extended" type="success" size="small">延伸</el-tag>
-            <el-tag v-else-if="row.skippedNegative" type="info" size="small">60天</el-tag>
+            <el-tag v-else-if="row.skippedNegative" type="info" size="small">
+              {{ strategyParams.baseHoldDays }}天
+            </el-tag>
+            <el-tag v-else-if="row.skippedSmaEntry" type="info" size="small">未達門檻</el-tag>
             <el-tag v-else type="warning" size="small">略過</el-tag>
           </template>
         </el-table-column>
@@ -152,7 +201,8 @@ import {
   computeSma20ExtendedExit,
   buildExportRow,
   computeAnalysis,
-  BASE_HOLD_DAYS,
+  DEFAULT_SMA20_PARAMS,
+  normalizeSma20Params,
 } from '@/utils/sma20ExtendedHold'
 import { StockPriceCache } from '@/utils/stockPriceCache'
 
@@ -167,6 +217,8 @@ const computing = ref(false)
 const progressCurrent = ref(0)
 const progressTotal = ref(0)
 
+const strategyParams = reactive({ ...DEFAULT_SMA20_PARAMS })
+
 const analysis = reactive({
   extendedCount: 0,
   beat60Pct: 0,
@@ -179,8 +231,13 @@ const progressPct = computed(() => {
   return Math.round((progressCurrent.value / progressTotal.value) * 100)
 })
 
+/** 表格僅顯示成功延伸持有且具 SMA 報酬的筆數（與上方統計一致） */
+const extendedTableRows = computed(() =>
+  resultRows.value.filter((r) => r.extended && r.sma20Return != null)
+)
+
 const stockCache = new StockPriceCache()
-const cacheStats = ref({ dbQueries: 0, cacheHits: 0, cachedStocks: 0 })
+const cacheStats = ref({ dbQueries: 0, cacheHits: 0, cachedStocks: 0, dbNoPriceData: 0 })
 
 /**
  * 向 Supabase 分頁抓取單一 stock_id 的完整日線（供 StockPriceCache 使用）
@@ -243,7 +300,7 @@ const clearAll = () => {
   resultRows.value = []
   exportRows.value = []
   stockCache.clear()
-  cacheStats.value = { dbQueries: 0, cacheHits: 0, cachedStocks: 0 }
+  cacheStats.value = { dbQueries: 0, cacheHits: 0, cachedStocks: 0, dbNoPriceData: 0 }
   Object.assign(analysis, { extendedCount: 0, beat60Pct: 0, avgBeat60Pct: 0 })
 }
 
@@ -271,18 +328,22 @@ const sortByExitSma20 = (a, b) => {
   return sortNum(parse(a.exitSma20), parse(b.exitSma20))
 }
 
-/** 狀態排序：延伸 → 60天 → 略過 */
+/** 狀態排序：延伸 → 60天 → 未達門檻 → 略過 */
 const sortByStatus = (a, b) => {
   const rank = (row) => {
     if (row.extended) return 0
     if (row.skippedNegative) return 1
-    return 2
+    if (row.skippedSmaEntry) return 2
+    return 3
   }
   return rank(a) - rank(b)
 }
 
 /**
- * 主流程：預載股價（顯示進度條）→ 逐筆計算 SMA20 延伸出場 → 統計與表格一次更新
+ * 主流程：預載股價（顯示進度條）→ 逐筆計算 SMA 延伸出場 → 統計與表格一次更新
+ *
+ * Phase 1：只對「正報酬且有代碼」的股票查 Supabase 日線並算 SMA（同標的只查一次）
+ * Phase 2：逐筆 CSV 判斷是否延伸；全部算完才一次寫入 resultRows / exportRows
  */
 const runAnalysis = async () => {
   if (!supabase) {
@@ -291,13 +352,16 @@ const runAnalysis = async () => {
   }
 
   try {
+    // --- 初始化：清快取、清舊結果、讀取介面策略參數 ---
     stockCache.clear()
     resultRows.value = []
     exportRows.value = []
-    const processed = []
-    const nextResultRows = []
-    const nextExportRows = []
+    const params = normalizeSma20Params(strategyParams)
+    const processed = [] // 供 computeAnalysis 統計用（含 extended、sma20Return）
+    const nextResultRows = [] // 表格顯示
+    const nextExportRows = [] // 下載 CSV
 
+    // --- Phase 1：收集需查股價的標的（負報酬不延伸，不必查 DB）---
     const positiveCodes = []
     for (const raw of rawRows.value) {
       const t = normalizeTradeRow(raw)
@@ -310,19 +374,22 @@ const runAnalysis = async () => {
     progressTotal.value = uniqueCodes.length
     progressCurrent.value = 0
 
+    // 逐檔預載：Supabase 日線 → buildPricesWithSma20 → 存入 StockPriceCache
     for (let i = 0; i < uniqueCodes.length; i++) {
       progressCurrent.value = i + 1
-      await stockCache.getEnrichedPrices(uniqueCodes[i])
+      await stockCache.getEnrichedPrices(uniqueCodes[i], { smaPeriod: params.smaPeriod })
       syncCacheStats()
     }
 
     dbLoading.value = false
     computing.value = true
 
+    // --- Phase 2：逐筆交易計算 ---
     for (let i = 0; i < rawRows.value.length; i++) {
       const raw = rawRows.value[i]
       const trade = normalizeTradeRow(raw)
 
+      // 預設列：出場日 = CSV 原出場時間，持有天數 = 基礎天數
       let row = {
         name: trade.name,
         code: trade.code,
@@ -330,16 +397,18 @@ const runAnalysis = async () => {
         exitDay: trade.sellDay || '—',
         return60Pct: fmtPct(trade.returnDecimal),
         sma20ReturnPct: '—',
-        totalHoldDays: BASE_HOLD_DAYS,
+        totalHoldDays: params.baseHoldDays,
         exitSma20: '—',
         extended: false,
         skippedNegative: false,
+        skippedSmaEntry: false,
         returnDecimal: trade.returnDecimal,
         sma20Return: null,
         useSma20Return: false,
         note: '',
       }
 
+      // 分支 1：報酬率無法解析 → 略過 SMA 計算
       if (trade.returnDecimal == null) {
         row.note = '報酬率無法解析'
         processed.push({ ...row, raw, trade })
@@ -348,17 +417,19 @@ const runAnalysis = async () => {
         continue
       }
 
+      // 分支 2：報酬 ≤ 0 → 不延伸，維持 CSV 原 60 天（或設定的基礎天數）出場
       if (trade.returnDecimal <= 0) {
         row.skippedNegative = true
         row.sma20ReturnPct = fmtPct(trade.returnDecimal)
-        row.totalHoldDays = BASE_HOLD_DAYS
-        row.note = '報酬為負，維持 60 天出場'
+        row.totalHoldDays = params.baseHoldDays
+        row.note = `報酬為負，維持 ${params.baseHoldDays} 天出場`
         processed.push({ ...row, raw, trade })
         nextResultRows.push(row)
         nextExportRows.push(buildExportRow(raw, { useSma20Return: false }))
         continue
       }
 
+      // 分支 3：無商品代碼 → 無法查股價
       if (!trade.code) {
         row.note = '無商品代碼'
         processed.push({ ...row, raw, trade })
@@ -368,9 +439,10 @@ const runAnalysis = async () => {
       }
 
       try {
-        const prices = stockCache.enrichedByStock.get(trade.code) ?? []
+        const prices = stockCache.getEnriched(trade.code, params.smaPeriod)
 
-        const loadErr = stockCache.getLoadError(trade.code)
+        const loadErr = stockCache.getLoadError(trade.code, params.smaPeriod)
+        // 分支 4：股價載入失敗（DB 無資料或查詢錯誤）
         if (loadErr) {
           row.note = `股價載入失敗：${loadErr}`
           processed.push({ ...row, raw, trade })
@@ -379,15 +451,19 @@ const runAnalysis = async () => {
           continue
         }
 
+        // 分支 5：正報酬 → 模擬「基礎天數出場後」依 SMA 連續破線出場
         const ext = computeSma20ExtendedExit({
           buyDay: trade.buyDay,
           buyPrice: trade.buyPrice,
           sellDay: trade.sellDay,
           sortedPrices: prices,
+          ...params,
         })
 
+        // 分支 5a：未達延伸門檻或計算失敗 → 維持原 CSV 出場
         if (!ext.ok) {
-          row.note = ext.reason || '計算失敗，維持 60 天'
+          row.skippedSmaEntry = Boolean(ext.skippedSmaEntry)
+          row.note = ext.reason || `計算失敗，維持 ${params.baseHoldDays} 天`
           row.sma20ReturnPct = fmtPct(trade.returnDecimal)
           processed.push({ ...row, raw, trade })
           nextResultRows.push(row)
@@ -395,6 +471,7 @@ const runAnalysis = async () => {
           continue
         }
 
+        // 分支 5b：延伸成功 → 更新出場日、SMA 報酬、總持有天數
         row.extended = ext.extended
         row.exitDay = ext.exitDay || trade.sellDay || '—'
         row.sma20Return = ext.sma20Return
@@ -409,10 +486,13 @@ const runAnalysis = async () => {
 
         processed.push({ ...row, raw, trade })
         nextResultRows.push(row)
+        // 下載 CSV：延伸者覆寫報酬率、出場時間、持有區間
         nextExportRows.push(
           buildExportRow(raw, {
             useSma20Return: true,
             sma20Return: ext.sma20Return,
+            exitDay: ext.exitDay,
+            totalHoldDays: ext.totalHoldDays,
           })
         )
       } catch (err) {
@@ -423,13 +503,14 @@ const runAnalysis = async () => {
       }
     }
 
+    // --- 一次更新 UI（避免逐行渲染造成卡頓）---
     resultRows.value = nextResultRows
     exportRows.value = nextExportRows
     syncCacheStats()
     const stats = computeAnalysis(processed)
     Object.assign(analysis, stats)
     ElMessage.success(
-      `分析完成（DB ${cacheStats.value.dbQueries} 次，快取命中 ${cacheStats.value.cacheHits} 次）`
+      `分析完成（DB ${cacheStats.value.dbQueries} 次，快取命中 ${cacheStats.value.cacheHits} 次，無股價 ${cacheStats.value.dbNoPriceData} 次）`
     )
   } catch (err) {
     console.error(err)
@@ -440,7 +521,19 @@ const runAnalysis = async () => {
   }
 }
 
-/** 下載結果 CSV（欄位與上傳檔相同，延伸者報酬率為 SMA20 報酬） */
+/** 下載檔名：策略參數 + 原檔名（避免特殊字元） */
+function buildDownloadFileName() {
+  const p = normalizeSma20Params(strategyParams)
+  const base = (fileName.value || 'result')
+    .replace(/\.csv$/i, '')
+    .replace(/[^\w\u4e00-\u9fff.-]+/g, '_')
+    .slice(0, 80)
+  const prem = String(p.smaEntryPremiumPct).replace('.', '_')
+  const paramTag = `d${p.baseHoldDays}_sma${p.smaPeriod}_cb${p.consecutiveBelow}_延伸門檻${prem}pct`
+  return `sma20_hold_${paramTag}_${base}.csv`
+}
+
+/** 下載結果 CSV（欄位與上傳檔相同，延伸者報酬率為 SMA 報酬） */
 const downloadCsv = () => {
   if (!exportRows.value.length) return
 
@@ -449,12 +542,13 @@ const downloadCsv = () => {
   })
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
+  const outName = buildDownloadFileName()
   const a = document.createElement('a')
   a.href = url
-  a.download = `sma20_hold_${fileName.value || 'result.csv'}`
+  a.download = outName
   a.click()
   URL.revokeObjectURL(url)
-  ElMessage.success('已下載 CSV')
+  ElMessage.success(`已下載 ${outName}`)
 }
 </script>
 
@@ -467,6 +561,12 @@ const downloadCsv = () => {
 
 .panel {
   margin-bottom: 20px;
+}
+
+.field-hint {
+  margin-left: 12px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 
 .file-input {

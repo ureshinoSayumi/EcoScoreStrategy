@@ -57,6 +57,11 @@ const router = createRouter({
       component: () => import('@/views/RecordAnalysis/OptimizedIndex.vue'),
     },
     {
+      path: '/sma20PyramidBacktest',
+      name: 'sma20PyramidBacktest',
+      component: () => import('@/views/RecordAnalysis/Sma20PyramidBacktestView.vue'),
+    },
+    {
       path: '/statAnalysis',
       name: 'statAnalysis',
       component: () => import('@/views/RecordAnalysis/StatAnalysisView.vue'),
