@@ -34,6 +34,12 @@
             placeholder="結束日"
           />
         </el-form-item>
+        <el-form-item label="資料類型">
+          <el-radio-group v-model="crawlType">
+            <el-radio value="daily">一般日線（TaiwanStockPrice）</el-radio>
+            <el-radio value="adj">還原權息日線（TaiwanStockPriceAdj）</el-radio>
+          </el-radio-group>
+        </el-form-item>
         <el-form-item label="請求間隔">
           <el-input-number v-model="intervalMs" :min="0" :max="10000" :step="1" />
           <span class="hint">毫秒（預設 1000 = 1 秒）</span>
@@ -45,7 +51,7 @@
             :loading="crawling"
             @click="startCrawl"
           >
-            爬取資料
+            {{ crawlButtonLabel }}
           </el-button>
           <el-button v-if="crawling" type="danger" plain @click="stopCrawl">
             停止
@@ -161,7 +167,7 @@
 import { ref, computed, reactive } from 'vue'
 import { ElMessage } from 'element-plus'
 import { extractStocksFromCsvFile, normalizeStockCode } from '@/utils/extractStockCodes'
-import { crawlFinmindStockDaily } from '@/api/stockCrawl'
+import { crawlFinmindStockDaily, crawlFinmindStockDailyAdj } from '@/api/stockCrawl'
 import { supabase, isSupabaseConfigured } from '@/lib/supabase'
 
 const fileName = ref('')
@@ -169,6 +175,7 @@ const stockList = ref([])
 const startDate = ref('2020-01-01')
 const endDate = ref('2025-12-31')
 const intervalMs = ref(1000)
+const crawlType = ref('daily')
 const crawling = ref(false)
 const stopRequested = ref(false)
 const currentCode = ref('')
@@ -193,6 +200,14 @@ const progressPercent = computed(() => {
   if (!progress.total) return 0
   return Math.round((progress.current / progress.total) * 100)
 })
+
+const crawlButtonLabel = computed(() =>
+  crawlType.value === 'adj' ? '爬取還原權息資料' : '爬取一般日線'
+)
+
+const crawlApi = computed(() =>
+  crawlType.value === 'adj' ? crawlFinmindStockDailyAdj : crawlFinmindStockDaily
+)
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -309,7 +324,7 @@ const startCrawl = async () => {
     currentCode.value = row.code
 
     try {
-      const res = await crawlFinmindStockDaily({
+      const res = await crawlApi.value({
         data_id: row.code,
         start_date: startDate.value,
         end_date: endDate.value,

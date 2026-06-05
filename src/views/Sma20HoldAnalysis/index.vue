@@ -47,6 +47,13 @@
             基礎出場日收盤須高於 SMA{{ strategyParams.smaPeriod }} 此 %（0 = 僅需高於均線）
           </span>
         </el-form-item>
+        <el-form-item label="股價資料">
+          <el-radio-group v-model="priceType" :disabled="dbLoading || computing">
+            <el-radio value="daily">一般日線</el-radio>
+            <el-radio value="adj">還原權息日線</el-radio>
+          </el-radio-group>
+          <span class="field-hint">SMA 與報酬計算皆使用同一資料源（DB 進出場價）</span>
+        </el-form-item>
 
         <el-divider content-position="left">資料上傳</el-divider>
         <el-form-item label="CSV 上傳">
@@ -138,6 +145,30 @@
         <el-table-column prop="buyDay" label="進場時間" width="110" sortable />
         <el-table-column prop="exitDay" label="出場日期" width="110" sortable />
         <el-table-column
+          prop="buyPrice"
+          label="進場價格"
+          width="96"
+          align="right"
+          sortable
+          :sort-method="sortByBuyPrice"
+        />
+        <el-table-column
+          prop="exit60Price"
+          :label="`${strategyParams.baseHoldDays}天出場價格`"
+          width="110"
+          align="right"
+          sortable
+          :sort-method="sortByExit60Price"
+        />
+        <el-table-column
+          prop="smaExitPrice"
+          :label="`SMA${strategyParams.smaPeriod}出場價格`"
+          width="118"
+          align="right"
+          sortable
+          :sort-method="sortBySmaExitPrice"
+        />
+        <el-table-column
           prop="return60Pct"
           :label="`${strategyParams.baseHoldDays}天報酬%`"
           width="100"
@@ -203,6 +234,7 @@ import {
   computeAnalysis,
   DEFAULT_SMA20_PARAMS,
   normalizeSma20Params,
+  resolveBaseExitPrice,
 } from '@/utils/sma20ExtendedHold'
 import { StockPriceCache } from '@/utils/stockPriceCache'
 
@@ -218,6 +250,12 @@ const progressCurrent = ref(0)
 const progressTotal = ref(0)
 
 const strategyParams = reactive({ ...DEFAULT_SMA20_PARAMS })
+const priceType = ref('daily')
+
+const PRICE_TABLE = {
+  daily: 'stock_daily_prices',
+  adj: 'stock_daily_prices_adj',
+}
 
 const analysis = reactive({
   extendedCount: 0,
@@ -243,13 +281,14 @@ const cacheStats = ref({ dbQueries: 0, cacheHits: 0, cachedStocks: 0, dbNoPriceD
  * 向 Supabase 分頁抓取單一 stock_id 的完整日線（供 StockPriceCache 使用）
  */
 stockCache.bindFetcher(async (stockId) => {
+  const table = PRICE_TABLE[priceType.value] ?? PRICE_TABLE.daily
   const allRows = []
   const pageSize = 1000
   let from = 0
 
   while (true) {
     const { data, error } = await supabase
-      .from('stock_daily_prices')
+      .from(table)
       .select('trade_date, open_price, close_price')
       .eq('stock_id', stockId)
       .order('trade_date', { ascending: true })
@@ -310,6 +349,14 @@ const fmtPct = (dec) => {
   return `${(dec * 100).toFixed(2)}%`
 }
 
+/** 價格顯示（保留 4 位小數） */
+const fmtPrice = (val) => {
+  if (val == null || Number.isNaN(val)) return '—'
+  return Number(val).toFixed(4)
+}
+
+const parsePriceCol = (v) => (v === '—' || v == null ? null : Number(v))
+
 /** 可排序數值：null / NaN 排到最後 */
 const sortNum = (a, b) => {
   const na = a == null || Number.isNaN(a)
@@ -324,9 +371,12 @@ const sortByReturn60 = (a, b) => sortNum(a.returnDecimal, b.returnDecimal)
 const sortBySma20Return = (a, b) => sortNum(a.sma20Return, b.sma20Return)
 
 const sortByExitSma20 = (a, b) => {
-  const parse = (v) => (v === '—' || v == null ? null : Number(v))
-  return sortNum(parse(a.exitSma20), parse(b.exitSma20))
+  return sortNum(parsePriceCol(a.exitSma20), parsePriceCol(b.exitSma20))
 }
+
+const sortByBuyPrice = (a, b) => sortNum(parsePriceCol(a.buyPrice), parsePriceCol(b.buyPrice))
+const sortByExit60Price = (a, b) => sortNum(parsePriceCol(a.exit60Price), parsePriceCol(b.exit60Price))
+const sortBySmaExitPrice = (a, b) => sortNum(parsePriceCol(a.smaExitPrice), parsePriceCol(b.smaExitPrice))
 
 /** 狀態排序：延伸 → 60天 → 未達門檻 → 略過 */
 const sortByStatus = (a, b) => {
@@ -395,6 +445,9 @@ const runAnalysis = async () => {
         code: trade.code,
         buyDay: trade.buyDay,
         exitDay: trade.sellDay || '—',
+        buyPrice: '—',
+        exit60Price: '—',
+        smaExitPrice: '—',
         return60Pct: fmtPct(trade.returnDecimal),
         sma20ReturnPct: '—',
         totalHoldDays: params.baseHoldDays,
@@ -480,6 +533,11 @@ const runAnalysis = async () => {
         row.totalHoldDays = ext.totalHoldDays
         row.exitSma20 =
           ext.exitSma20 != null ? Number(ext.exitSma20).toFixed(4) : '—'
+        row.buyPrice = fmtPrice(ext.buyPriceUsed)
+        row.exit60Price = fmtPrice(
+          resolveBaseExitPrice(prices, trade.sellDay, trade.sellPrice)
+        )
+        row.smaExitPrice = fmtPrice(ext.exitPrice)
         row.useSma20Return = true
         row.note =
           ext.reason || (ext.extraHoldDays > 0 ? `延伸 ${ext.extraHoldDays} 個交易日` : '')

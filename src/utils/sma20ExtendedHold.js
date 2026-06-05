@@ -136,6 +136,64 @@ function getSmaAtRow(sorted, idx, period) {
   return smaAtIndex(sorted, idx, period)
 }
 
+/**
+ * 解析價格字串（去除逗號）
+ */
+function parsePrice(raw) {
+  if (raw == null || String(raw).trim() === '') return NaN
+  const n = Number(String(raw).replace(/,/g, '').trim())
+  return Number.isNaN(n) ? NaN : n
+}
+
+/**
+ * 進場價：優先使用 DB 當日開盤（與出場價同一資料源），避免 CSV 與 DB 還原基準不一致
+ */
+function resolveBuyPrice(sortedPrices, buyDay, csvBuyPrice) {
+  const idx = findRowIndexByDate(sortedPrices, buyDay)
+  if (idx >= 0) {
+    const open = Number(sortedPrices[idx].open_price)
+    const close = Number(sortedPrices[idx].close_price)
+    if (Number.isFinite(open) && open > 0) return open
+    if (Number.isFinite(close) && close > 0) return close
+  }
+  const csv = parsePrice(csvBuyPrice)
+  return Number.isFinite(csv) && csv > 0 ? csv : NaN
+}
+
+/**
+ * 出場價：次日開盤；若開盤與收盤偏離過大（資料異常）則改收盤
+ */
+function resolveExitPrice(sortedPrices, exitIdx, fallbackIdx) {
+  const row = sortedPrices[exitIdx]
+  const open = Number(row?.open_price)
+  const close = Number(row?.close_price)
+  if (Number.isFinite(open) && open > 0) {
+    if (Number.isFinite(close) && close > 0) {
+      const ratio = open / close
+      if (ratio > 3 || ratio < 1 / 3) return close
+    }
+    return open
+  }
+  if (Number.isFinite(close) && close > 0) return close
+  const fb = Number(sortedPrices[fallbackIdx]?.close_price)
+  return Number.isFinite(fb) && fb > 0 ? fb : NaN
+}
+
+/**
+ * 基礎天數出場價：優先使用 DB 當日收盤（對應 CSV 60 天出場價）
+ */
+function resolveBaseExitPrice(sortedPrices, sellDay, csvSellPrice) {
+  const idx = findRowIndexByDate(sortedPrices, sellDay)
+  if (idx >= 0) {
+    const close = Number(sortedPrices[idx].close_price)
+    const open = Number(sortedPrices[idx].open_price)
+    if (Number.isFinite(close) && close > 0) return close
+    if (Number.isFinite(open) && open > 0) return open
+  }
+  const csv = parsePrice(csvSellPrice)
+  return Number.isFinite(csv) && csv > 0 ? csv : NaN
+}
+
 /** 依 trade_date 找日線索引（日期字串 / / - 皆可） */
 function findRowIndexByDate(sortedPrices, dateStr) {
   const target = parseDateLoose(dateStr)
@@ -227,9 +285,9 @@ export function computeSma20ExtendedExit({
     return { ok: false, reason: '日期或股價資料不足' }
   }
 
-  const buyPx = Number(buyPrice)
+  const buyPx = resolveBuyPrice(sortedPrices, buyDay, buyPrice)
   if (!buyPx || Number.isNaN(buyPx)) {
-    return { ok: false, reason: '進場價格無效' }
+    return { ok: false, reason: '進場價格無效（DB 與 CSV 皆無法解析）' }
   }
 
   // 基礎出場日須收盤 > SMA × (1 + 溢價%)，否則不進入延伸策略
@@ -267,10 +325,7 @@ export function computeSma20ExtendedExit({
       // 連續破線達標 → 次日開盤出場（若無次日則用當日收盤）
       if (consecutive >= belowDays) {
         const exitIdx = i + 1
-        const exitOpen =
-          exitIdx < sortedPrices.length
-            ? Number(sortedPrices[exitIdx].open_price)
-            : Number(sortedPrices[i].close_price)
+        const exitOpen = resolveExitPrice(sortedPrices, exitIdx, i)
         const exitDay =
           exitIdx < sortedPrices.length
             ? sortedPrices[exitIdx].trade_date
@@ -291,6 +346,7 @@ export function computeSma20ExtendedExit({
           extended: true,
           exitDay,
           exitPrice: exitOpen,
+          buyPriceUsed: buyPx,
           exitSma20: sma, // 觸發當日（第 N 次破線）的 SMA，非出場日
           sma20Return: (exitOpen - buyPx) / buyPx,
           totalHoldDays: daysBase + extraDays,
@@ -304,7 +360,10 @@ export function computeSma20ExtendedExit({
 
   // --- 資料用盡仍未觸發出場：以最後收盤價強制平倉 ---
   const last = sortedPrices[sortedPrices.length - 1]
-  const exitOpen = Number(last.close_price)
+  const exitOpen = resolveExitPrice(sortedPrices, sortedPrices.length - 1, sortedPrices.length - 1)
+  if (Number.isNaN(exitOpen)) {
+    return { ok: false, reason: '出場價無效' }
+  }
   const daysBase =
     countTradingDaysBetween(sortedPrices, buyDay, sellDay, false) ?? baseDays
   const extraDays =
@@ -315,6 +374,7 @@ export function computeSma20ExtendedExit({
     extended: true,
     exitDay: last.trade_date,
     exitPrice: exitOpen,
+    buyPriceUsed: buyPx,
     exitSma20: getSmaAtRow(sortedPrices, sortedPrices.length - 1, period),
     sma20Return: (exitOpen - buyPx) / buyPx,
     totalHoldDays: daysBase + extraDays,
@@ -435,4 +495,4 @@ export function computeAnalysis(processedRows) {
   }
 }
 
-export { parseReturnDecimal }
+export { parseReturnDecimal, parsePrice, resolveBuyPrice, resolveBaseExitPrice }

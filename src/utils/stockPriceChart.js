@@ -1,16 +1,26 @@
 const SMA_PERIOD = 20
 
+const PRICE_TABLE = {
+  daily: 'stock_daily_prices',
+  adj: 'stock_daily_prices_adj',
+}
+
 /**
  * 從 Supabase 查詢區間內日線（自動分頁）
+ * @param {'daily'|'adj'} priceType - daily 一般日線，adj 還原權息日線
  */
-export async function fetchStockDailyPrices(supabase, { stockId, startDate, endDate }) {
+export async function fetchStockDailyPrices(
+  supabase,
+  { stockId, startDate, endDate, priceType = 'daily' }
+) {
+  const table = PRICE_TABLE[priceType] ?? PRICE_TABLE.daily
   const allRows = []
   const pageSize = 1000
   let from = 0
 
   while (true) {
     let q = supabase
-      .from('stock_daily_prices')
+      .from(table)
       .select('trade_date, open_price, high_price, low_price, close_price, volume')
       .eq('stock_id', stockId)
       .order('trade_date', { ascending: true })
@@ -45,8 +55,10 @@ export function calcSmaSeries(closes, period = SMA_PERIOD) {
 
 /**
  * 組 ECharts option：K 線 + SMA20
+ * @param {'daily'|'adj'} priceType
  */
-export function buildStockChartOption(rows, stockId) {
+export function buildStockChartOption(rows, stockId, priceType = 'daily') {
+  const priceLabel = priceType === 'adj' ? '還原權息日線' : '日線'
   const dates = rows.map((r) => r.trade_date)
   const ohlc = rows.map((r) => [
     Number(r.open_price),
@@ -59,7 +71,7 @@ export function buildStockChartOption(rows, stockId) {
 
   return {
     title: {
-      text: `${stockId} 日線走勢`,
+      text: `${stockId} ${priceLabel}走勢`,
       left: 'center',
     },
     legend: {

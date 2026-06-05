@@ -32,6 +32,12 @@
             clearable
           />
         </el-form-item>
+        <el-form-item label="資料類型">
+          <el-radio-group v-model="priceType">
+            <el-radio value="daily">一般日線</el-radio>
+            <el-radio value="adj">還原權息日線</el-radio>
+          </el-radio-group>
+        </el-form-item>
         <el-form-item>
           <el-button
             type="primary"
@@ -73,6 +79,7 @@ const supabaseReady = isSupabaseConfigured()
 const stockId = ref('0050')
 const startDate = ref('2024-01-01')
 const endDate = ref('2025-12-31')
+const priceType = ref('daily')
 const loading = ref(false)
 const summary = ref('')
 const hasChart = ref(false)
@@ -114,10 +121,15 @@ async function loadChart() {
       stockId: id,
       startDate: startDate.value || undefined,
       endDate: endDate.value || undefined,
+      priceType: priceType.value,
     })
 
     if (!rows.length) {
-      ElMessage.warning('此區間無資料，請確認已爬取該股票日線')
+      const hint =
+        priceType.value === 'adj'
+          ? '此區間無還原權息資料，請確認已爬取該股票還原權息日線'
+          : '此區間無資料，請確認已爬取該股票日線'
+      ElMessage.warning(hint)
       return
     }
 
@@ -126,9 +138,10 @@ async function loadChart() {
     await nextTick()
 
     initChart()
-    chartInstance.setOption(buildStockChartOption(rows, id), true)
+    chartInstance.setOption(buildStockChartOption(rows, id, priceType.value), true)
 
-    summary.value = `${id}：${rows[0].trade_date} ~ ${rows[rows.length - 1].trade_date}，共 ${rows.length} 個交易日`
+    const typeLabel = priceType.value === 'adj' ? '還原權息' : '一般'
+    summary.value = `${id}（${typeLabel}）：${rows[0].trade_date} ~ ${rows[rows.length - 1].trade_date}，共 ${rows.length} 個交易日`
     ElMessage.success('圖表已更新')
   } catch (err) {
     console.error(err)

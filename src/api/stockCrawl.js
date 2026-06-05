@@ -11,3 +11,6 @@ const stockService = axios.create({
 
 export const crawlFinmindStockDaily = (payload) =>
   stockService.post('/api/crawl/finmind/stock-daily', payload)
+
+export const crawlFinmindStockDailyAdj = (payload) =>
+  stockService.post('/api/crawl/finmind/stock-daily-adj', payload)
