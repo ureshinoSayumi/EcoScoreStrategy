@@ -23,6 +23,12 @@
           <el-form-item label="手續費">
             <el-input-number v-model="fee" :min="0" :step="0.1" size="small" />
           </el-form-item>
+          <el-form-item label="DCA 初始資金">
+            <el-input-number v-model="dcaInitialCapital" :min="0" :step="100" size="small" />
+          </el-form-item>
+          <el-form-item label="DCA 每月投入">
+            <el-input-number v-model="dcaMonthlyContribution" :min="0" :step="100" size="small" />
+          </el-form-item>
           <el-form-item label="檔案名稱">
              <el-text>{{ fileNames.join(',') }}</el-text>
            </el-form-item>
@@ -92,6 +98,29 @@
             </template>
           </el-card>
         </el-col>
+
+        <!-- 定期定額 2X ETF + QQQ SMA200 -->
+        <el-col :span="6">
+          <el-card shadow="hover" style="max-width: 480px">
+            <el-space direction="vertical" alignment="flex-start">
+              <el-text>定期定額 2X ETF · QQQ SMA{{ SMA }}</el-text>
+              <el-text>累計投入: {{ dcaTotalContributions }}</el-text>
+              <el-text>期末資產: {{ dcaEndEquity }}</el-text>
+              <el-text>總報酬（對投入）: {{ dcaTotalReturn }}</el-text>
+              <el-text>區間最大回徹: {{ dcaMaxDrawdownValue }}％</el-text>
+              <el-text>年度平均報酬率: {{ dcaAnnualReturn }}％</el-text>
+              <el-text>年度中位數報酬率: {{ dcaMedianAnnualReturn }}％</el-text>
+              <el-text>最差年度報酬率: {{ dcaWorstAnnualReturn }}％</el-text>
+              <el-text>最佳年度報酬率: {{ dcaBestAnnualReturn }}％</el-text>
+              <el-text>交易筆數: {{ dcaTradeCount }}</el-text>
+            </el-space>
+            <template #footer>
+              <el-space direction="vertical" alignment="flex-start">
+                <el-text v-for="item in dcaAnnualReturnLog" :key="item.year">{{ item.year }} : {{ item.return }}％</el-text>
+              </el-space>
+            </template>
+          </el-card>
+        </el-col>
       </el-row>
 
       <!-- 表格 -->
@@ -153,6 +182,8 @@ const exitSensitive = ref(1) // 連續跌破日
 const buyBand = ref(0.00) // 買入band
 const sellBand = ref(0.00) // 賣出band
 const fee = ref(1.00) // 手續費
+const dcaInitialCapital = ref(1000)
+const dcaMonthlyContribution = ref(1000)
 
 // SMA 策略統計
 const smaTotalReturn = ref('') // 總報酬率
@@ -183,6 +214,18 @@ const bhWorstAnnualReturn = ref() // 最差年度報酬率
 const bhBestAnnualReturn = ref() // 最佳年度報酬率
 const bhAnnualReturnLog = ref([]) // 年度報酬率紀錄
 
+// 定期定額 SMA200 策略
+const dcaTotalReturn = ref('')
+const dcaMaxDrawdownValue = ref()
+const dcaAnnualReturn = ref(0)
+const dcaMedianAnnualReturn = ref()
+const dcaWorstAnnualReturn = ref()
+const dcaBestAnnualReturn = ref()
+const dcaAnnualReturnLog = ref([])
+const dcaTradeCount = ref()
+const dcaTotalContributions = ref('')
+const dcaEndEquity = ref('')
+
 /************************************************
  * 主函式：同時計算 Buy&Hold + SMA 策略
  ************************************************/
@@ -195,6 +238,8 @@ const runTest = (
   buyBand = 0.00,
   sellBand = 0.00,
   fee = 0.00,
+  dcaInitial = 1000,
+  dcaMonthly = 1000,
 ) =>  {
   const bh = runBuyAndHold(rawBars, initialCapital);
 
@@ -206,6 +251,18 @@ const runTest = (
 
   // 用QQQ 200SMA 當訊號來源
   const smaQQQ = runSMAFORQQQ(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee, qqqData.value);
+
+  const dca = runDcaSmaQQQ(
+    rawBars,
+    window,
+    dcaInitial,
+    dcaMonthly,
+    enterSensitive,
+    exitSensitive,
+    buyBand,
+    sellBand,
+    qqqData.value,
+  );
 
   /************************************************
    * 通用：績效統計2
@@ -502,7 +559,7 @@ const runTest = (
         }
 
         // 3) 扣手續費（你原本是每次換倉扣一次）
-        // equity *= 1 - (fee / 100);
+        equity *= 1 - (fee / 100);
       }
 
       holding = nextHolding;
@@ -723,7 +780,7 @@ const runTest = (
         }
 
         // 3) fee（你原本註解掉）
-        // equity *= 1 - (fee / 100);
+        equity *= 1 - (fee / 100);
       }
 
       holding = nextHolding;
@@ -737,6 +794,204 @@ const runTest = (
     };
   }
 
+  /**
+   * 定期定額 2X ETF：QQQ SMA 訊號 + 每月首個交易日加碼，有訊號時全額投入
+   */
+  function runDcaSmaQQQ(
+    rawBars,
+    window = 200,
+    initialCapital = 1000,
+    monthlyContribution = 1000,
+    enterSensitive = 1,
+    exitSensitive = 1,
+    buyBand = 0.0,
+    sellBand = 0.0,
+    qqqBarsRaw = [],
+  ) {
+    const bars = [...rawBars]
+      .map((r) => ({
+        date: new Date(r.Date),
+        date2: r.Date,
+        close: Number(r.Close),
+      }))
+      .sort((a, b) => a.date - b.date);
+
+    const n = bars.length;
+    if (n < window + 1) {
+      console.log(`DCA 資料太短，需要至少 ${window + 1} 根`);
+      return null;
+    }
+
+    const qqqMap = new Map();
+    for (const r of qqqBarsRaw) {
+      qqqMap.set(r.Date, {
+        close: Number(r.Close),
+      });
+    }
+
+    const getQQQBar = (date2) => qqqMap.get(date2) ?? null;
+
+    let qqqSum = 0;
+    const qqqCloseWindow = [];
+    for (let i = 0; i < n; i++) {
+      const date2 = bars[i].date2;
+      const qqqBar = getQQQBar(date2);
+      if (!qqqBar || !Number.isFinite(qqqBar.close)) {
+        bars[i].qqqSma = null;
+        continue;
+      }
+      qqqCloseWindow.push(qqqBar.close);
+      qqqSum += qqqBar.close;
+      if (qqqCloseWindow.length > window) {
+        qqqSum -= qqqCloseWindow.shift();
+      }
+      bars[i].qqqSma =
+        qqqCloseWindow.length === window ? qqqSum / window : null;
+    }
+
+    const monthKeyOf = (d) => `${d.getFullYear()}-${d.getMonth()}`;
+
+    let cash = initialCapital;
+    let shares = 0;
+    let totalContributions = initialCapital;
+    let tradeCount = 0;
+    let aboveCount = 0;
+    let belowCount = 0;
+    let inMarket = false;
+
+    const equityCurve = [];
+
+    for (let i = 0; i < n; i++) {
+      const bar = bars[i];
+      const prevMonth = i > 0 ? monthKeyOf(bars[i - 1].date) : null;
+      const curMonth = monthKeyOf(bar.date);
+
+      // 每月首個交易日加碼（含資料第一個月）
+      if (curMonth !== prevMonth) {
+        cash += monthlyContribution;
+        totalContributions += monthlyContribution;
+      }
+
+      const qqqBarToday = getQQQBar(bar.date2);
+      const qqqSma = bar.qqqSma;
+      let wantHold = inMarket;
+
+      if (qqqSma == null || !qqqBarToday?.close) {
+        aboveCount = 0;
+        belowCount = 0;
+        wantHold = false;
+      } else {
+        const relDiff = (qqqBarToday.close - qqqSma) / qqqSma;
+        if (relDiff > buyBand / 100) {
+          aboveCount += 1;
+          belowCount = 0;
+        } else if (relDiff < -(sellBand / 100)) {
+          belowCount += 1;
+          aboveCount = 0;
+        } else {
+          aboveCount = 0;
+          belowCount = 0;
+        }
+
+        if (inMarket) {
+          wantHold = belowCount < exitSensitive;
+        } else {
+          wantHold = aboveCount >= enterSensitive;
+        }
+      }
+
+      // 跌破 → 全賣；站上 → 閒置資金全買
+      if (!wantHold && shares > 0) {
+        cash += shares * bar.close;
+        shares = 0;
+        inMarket = false;
+        tradeCount += 1;
+      }
+
+      if (wantHold && cash > 0 && bar.close > 0) {
+        shares += cash / bar.close;
+        cash = 0;
+        inMarket = true;
+        tradeCount += 1;
+      } else if (!wantHold) {
+        inMarket = false;
+      } else {
+        inMarket = shares > 0;
+      }
+
+      const equity = cash + shares * bar.close;
+      equityCurve.push({
+        date: bar.date,
+        date2: bar.date2,
+        equity,
+        contributions: totalContributions,
+        holding: inMarket ? 'QLD' : 'CASH',
+      });
+    }
+
+    return {
+      equityCurve,
+      stats: calcDcaStats(equityCurve),
+      tradeCount,
+    };
+  }
+
+  function calcAnnualReturnsFromCurve(equityCurve) {
+    const byYear = {};
+    for (const pt of equityCurve) {
+      const d = pt.date instanceof Date ? pt.date : new Date(pt.date);
+      const year = d.getFullYear();
+      if (!byYear[year]) {
+        byYear[year] = { startEquity: pt.equity, endEquity: pt.equity, first: d, last: d };
+      }
+      if (d < byYear[year].first) {
+        byYear[year].first = d;
+        byYear[year].startEquity = pt.equity;
+      }
+      if (d > byYear[year].last) {
+        byYear[year].last = d;
+        byYear[year].endEquity = pt.equity;
+      }
+    }
+    const annualReturns = [];
+    for (const yearStr of Object.keys(byYear).sort()) {
+      const year = Number(yearStr);
+      const y = byYear[year];
+      const ret = y.endEquity / y.startEquity - 1;
+      annualReturns.push({ year, return: +(ret * 100).toFixed(2) });
+    }
+    return annualReturns;
+  }
+
+  function calcDcaStats(equityCurve) {
+    const endEquity = equityCurve[equityCurve.length - 1].equity;
+    const totalContributions = equityCurve[equityCurve.length - 1].contributions;
+    const totalReturn = endEquity / totalContributions - 1;
+    const tradingDays = equityCurve.length;
+    const years = tradingDays / 252;
+    const cagr = years > 0 ? Math.pow(1 + totalReturn, 1 / years) - 1 : 0;
+
+    let maxEquity = equityCurve[0].equity;
+    let maxDrawdown = 0;
+    for (const pt of equityCurve) {
+      if (pt.equity > maxEquity) maxEquity = pt.equity;
+      const dd = pt.equity / maxEquity - 1;
+      if (dd < maxDrawdown) maxDrawdown = dd;
+    }
+
+    const annualReturns = calcAnnualReturnsFromCurve(equityCurve);
+
+    return {
+      endEquity,
+      totalContributions,
+      totalReturn,
+      totalReturnPercent: (totalReturn * 100).toFixed(2) + '%',
+      maxDrawdown: +(maxDrawdown * 100).toFixed(2),
+      cagr: +(cagr * 100).toFixed(2),
+      annualReturns,
+    };
+  }
+
   return {
     buyAndHold: bh.stats,
     smaStrategy: sma.stats,
@@ -746,6 +1001,9 @@ const runTest = (
     bhCurve: bh.equityCurve,
     smaCurve: sma.equityCurve,
     smaQQQCurve: smaQQQ.equityCurve,
+    dcaStrategy: dca?.stats ?? null,
+    dcaCurve: dca?.equityCurve ?? [],
+    dcaTradeCount: dca?.tradeCount ?? 0,
   };
 }
 
@@ -774,7 +1032,18 @@ const inputFile = async (event) => {
 }
 
 const backtestSMA200 = (data) => {
-  const result = runTest(data, 1000000, SMA.value, enterSensitive.value, exitSensitive.value, buyBand.value, sellBand.value, fee.value);
+  const result = runTest(
+    data,
+    1000000,
+    SMA.value,
+    enterSensitive.value,
+    exitSensitive.value,
+    buyBand.value,
+    sellBand.value,
+    fee.value,
+    dcaInitialCapital.value,
+    dcaMonthlyContribution.value,
+  );
 
 
   console.log("Buy & Hold :", result.buyAndHold);
@@ -813,8 +1082,23 @@ const backtestSMA200 = (data) => {
   bhBestAnnualReturn.value = result.buyAndHold.annualReturns.reduce((max, item) => item.return > max ? item.return : max, 0); // 最佳年度報酬率
   bhMedianAnnualReturn.value = result.buyAndHold.annualReturns.reduce((median, item) => { return median + item.return }, 0) / result.buyAndHold.annualReturns.length; // 年度中位數報酬率
 
+  if (result.dcaStrategy) {
+    dcaTotalReturn.value = result.dcaStrategy.totalReturnPercent;
+    dcaMaxDrawdownValue.value = result.dcaStrategy.maxDrawdown;
+    dcaAnnualReturn.value = result.dcaStrategy.cagr;
+    dcaAnnualReturnLog.value = result.dcaStrategy.annualReturns;
+    dcaTradeCount.value = result.dcaTradeCount;
+    dcaTotalContributions.value = `$${Math.round(result.dcaStrategy.totalContributions).toLocaleString()}`;
+    dcaEndEquity.value = `$${Math.round(result.dcaStrategy.endEquity).toLocaleString()}`;
+    dcaWorstAnnualReturn.value = result.dcaStrategy.annualReturns.reduce((min, item) => item.return < min ? item.return : min, 0);
+    dcaBestAnnualReturn.value = result.dcaStrategy.annualReturns.reduce((max, item) => item.return > max ? item.return : max, 0);
+    dcaMedianAnnualReturn.value =
+      result.dcaStrategy.annualReturns.reduce((sum, item) => sum + item.return, 0) /
+      (result.dcaStrategy.annualReturns.length || 1);
+  }
+
   // 輸出圖表
-  buildChart(result.bhCurve, result.smaCurve, result.smaQQQCurve);
+  buildChart(result.bhCurve, result.smaCurve, result.smaQQQCurve, result.dcaCurve);
 }
 
 // 計算與200SMA的區間距離
@@ -870,10 +1154,38 @@ const buildChart3 = (data, window) => {
   })
 }
 
-const buildChart = (bhCurve, smaCurve, smaQQQCurve) => {
+const buildChart = (bhCurve, smaCurve, smaQQQCurve, dcaCurve = []) => {
   // 輸出圖表
   // 計算 netAsset（市值 = 現金 + 成本，這裡.value)
   const chart = echarts.init(myChartDom.value)
+
+  const legend = ['單筆持有', '200 SMA', 'SMAQQQ']
+  const series = [
+    {
+      name: '單筆持有',
+      type: 'line',
+      data: bhCurve.map((h) => parseFloat(h.equity)),
+    },
+    {
+      name: '200 SMA',
+      type: 'line',
+      data: smaCurve.map((h) => parseFloat(h.equity)),
+    },
+    {
+      name: 'SMAQQQ',
+      type: 'line',
+      data: smaQQQCurve.map((h) => parseFloat(h.equity)),
+    },
+  ]
+
+  if (dcaCurve.length) {
+    legend.push('定期定額 DCA')
+    series.push({
+      name: '定期定額 DCA',
+      type: 'line',
+      data: dcaCurve.map((h) => parseFloat(h.equity)),
+    })
+  }
 
   chart.setOption({
     title: { text: '資金 / 持倉成本 / 資產走勢圖' },
@@ -884,43 +1196,32 @@ const buildChart = (bhCurve, smaCurve, smaQQQCurve) => {
         const d = bhCurve[i]
         const s = smaCurve[i]
         const q = smaQQQCurve[i]
-        return `
+        const dc = dcaCurve[i]
+        let html = `
           日期：${d.date2}<br/>
           單筆持有：$${d.equity}<br/>
           200 SMA：$${s.equity}<br/>
-          QQQ：$${q.equity}<br/>
+          SMAQQQ：$${q.equity}<br/>
         `
-      }
+        if (dc) {
+          html += `定期定額 DCA：$${Math.round(dc.equity)}（累計投入 $${Math.round(dc.contributions)}）<br/>`
+        }
+        return html
+      },
     },
     legend: {
-      data: ['單筆持有', '200 SMA', 'SMAQQQ']
+      data: legend,
     },
     xAxis: {
       type: 'category',
-      data: bhCurve.map(h => h.date2),
-      axisLabel: { rotate: 45 }
+      data: bhCurve.map((h) => h.date2),
+      axisLabel: { rotate: 45 },
     },
     yAxis: {
       type: 'value',
-      name: '金額（元）'
+      name: '金額（元）',
     },
-    series: [
-      {
-        name: '單筆持有',
-        type: 'line',
-        data: bhCurve.map(h => parseFloat(h.equity))
-      },
-      {
-        name: '200 SMA',
-        type: 'line',
-        data: smaCurve.map(h => parseFloat(h.equity))
-      },
-      {
-        name: 'SMAQQQ',
-        type: 'line',
-        data: smaQQQCurve.map(h => parseFloat(h.equity))
-      }
-    ]
+    series,
   })
 }
 
