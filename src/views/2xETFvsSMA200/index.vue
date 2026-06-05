@@ -1289,9 +1289,7 @@ const monteCarloSimulation = () => {
 onMounted(async () => {
   const res = await fetch('/qqq.csv')
   const csvText = await res.text()
-  const data = await parseCSV(csvText)
-  qqqData.value = data
-  console.log('qqqData', qqqData.value)
+  qqqData.value = await parseCSV(csvText)
 })
 </script>
 <style scoped>

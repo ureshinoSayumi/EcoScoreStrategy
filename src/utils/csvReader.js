@@ -30,9 +30,8 @@ export const readFileAsUTF8 = async (file) => {
   }
 };
 
-export const parseCSV = async (file) => {
-  const utf8Text = await readFileAsUTF8(file);
-  return new Promise((resolve, reject) => {
+const parseCSVText = (utf8Text) =>
+  new Promise((resolve, reject) => {
     Papa.parse(utf8Text, {
       header: true,
       skipEmptyLines: true,
@@ -42,6 +41,12 @@ export const parseCSV = async (file) => {
       error: (err) => reject(err),
     });
   });
+
+/** @param {File|Blob|string} fileOrText File 物件或已是 UTF-8 的 CSV 字串 */
+export const parseCSV = async (fileOrText) => {
+  const utf8Text =
+    typeof fileOrText === 'string' ? fileOrText : await readFileAsUTF8(fileOrText);
+  return parseCSVText(utf8Text);
 };
 
 /**
