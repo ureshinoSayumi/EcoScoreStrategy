@@ -20,6 +20,12 @@ const router = createRouter({
       name: 'sma20HoldAnalysis',
       component: () => import('@/views/Sma20HoldAnalysis/index.vue'),
     },
+    // SMA20 60日進場回測
+    {
+      path: '/sma20Day60EntryBacktest',
+      name: 'sma20Day60EntryBacktest',
+      component: () => import('@/views/Sma20Day60EntryBacktest/index.vue'),
+    },
     // 股票日線走勢圖（K 線 + SMA20）
     {
       path: '/stockPriceChart',

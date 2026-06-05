@@ -2,7 +2,7 @@
   <div>
     <el-descriptions :column="2" border size="small">
       <el-descriptions-item label="平均報酬">{{ stats.averageReturn.toFixed(2) }}%</el-descriptions-item>
-      <el-descriptions-item label="成交筆數">{{ stats.tradeCount }}</el-descriptions-item>
+      <el-descriptions-item :label="tradeCountLabel">{{ stats.tradeCount }}</el-descriptions-item>
       <el-descriptions-item label="平均賺賠比">{{ formatProfitLossRatio(stats.profitLossRatio) }}</el-descriptions-item>
       <el-descriptions-item label="報酬中位數">{{ stats.medianReturn.toFixed(2) }}%</el-descriptions-item>
       <el-descriptions-item label="勝率">{{ stats.winRate.toFixed(2) }}%</el-descriptions-item>
@@ -47,6 +47,8 @@
 <script setup>
 defineProps({
   stats: { type: Object, required: true },
+  /** 單筆統計筆數欄位標籤（預設為組合成交筆數） */
+  tradeCountLabel: { type: String, default: '成交筆數' },
 })
 
 function formatProfitLossRatio(v) {
