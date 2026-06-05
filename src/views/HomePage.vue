@@ -1,7 +1,7 @@
 <template>
   <div class="home-page">
     <div class="header">
-      <h1>景氣循環投資法</h1>
+      <h1>myStock</h1>
       <p class="subtitle">選擇功能進入</p>
     </div>
 
@@ -39,18 +39,12 @@ const routeItems = computed(() => {
   const routes = router.getRoutes()
   const titleMap = {
     home: '首頁',
-    ecoScore: '景氣循環投資法',
-    technicalAnalysis: '技術分析投資法',
-    fetchStock: '取得股票資料',
     batchCrawl: '批次爬取 FinMind 日線',
     sma20HoldAnalysis: 'SMA20 延伸持有分析',
     stockPriceChart: '股票日線走勢圖',
     recordAnalysis: 'XQ 分析器',
     optimizedIndex: 'XQ 分析器 重製版',
     sma20PyramidBacktest: 'SMA20 延伸加碼回測',
-    statAnalysis: '統計分析（雙 CSV 合併）',
-    multiStrategyCsvBacktest: '多策略 CSV 回測（持股均分）',
-    strategyOverlapCsv: '雙策略 CSV 重疊篩選',
     '2xETFvsSMA200': '2倍ETF vs SMA200',
     strategyCompare: '策略選股比較',
     holdingsRecord: '持股紀錄',

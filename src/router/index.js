@@ -8,24 +8,6 @@ const router = createRouter({
       name: 'home',
       component: () => import('@/views/HomePage.vue'),
     },
-    // 景氣循環投資法（原首頁功能）
-    {
-      path: '/ecoScore',
-      name: 'ecoScore',
-      component: () => import('@/views/HomeView.vue'),
-    },
-    // 技術分析投資法 單筆買賣
-    {
-      path: '/technicalAnalysis',
-      name: 'technicalAnalysis',
-      component: () => import('@/views/TechnicalAnalysis/index.vue'),
-    },
-    // 取得股票資料
-    {
-      path: '/fetchStock',
-      name: 'fetchStock',
-      component: () => import('@/views/ApiGet/index.vue'),
-    },
     // 批次爬取 FinMind 日線
     {
       path: '/batchCrawl',
@@ -60,21 +42,6 @@ const router = createRouter({
       path: '/sma20PyramidBacktest',
       name: 'sma20PyramidBacktest',
       component: () => import('@/views/RecordAnalysis/Sma20PyramidBacktestView.vue'),
-    },
-    {
-      path: '/statAnalysis',
-      name: 'statAnalysis',
-      component: () => import('@/views/RecordAnalysis/StatAnalysisView.vue'),
-    },
-    {
-      path: '/multiStrategyCsvBacktest',
-      name: 'multiStrategyCsvBacktest',
-      component: () => import('@/views/RecordAnalysis/MultiStrategyCsvBacktestView.vue'),
-    },
-    {
-      path: '/strategyOverlapCsv',
-      name: 'strategyOverlapCsv',
-      component: () => import('@/views/RecordAnalysis/StrategyOverlapCsvView.vue'),
     },
     // 2倍作多槓桿型ETF，單筆買入 VS SMA200 策略
     {
