@@ -5,6 +5,13 @@
         <span>批次爬取 FinMind 日線</span>
       </template>
 
+      <el-alert
+        type="info"
+        :closable="false"
+        class="format-alert"
+        title="台股總覽 CSV"
+        description="請上傳含「產業別、股票代碼、股票名稱、市場別」的上市櫃清單。系統僅保留 4 碼股票代號（略過 ETF、債券、權證等），爬取時一併寫入產業別、名稱、市場別。"
+      />
       <el-form label-width="100px">
         <el-form-item label="CSV 上傳">
           <input
@@ -18,6 +25,10 @@
           <el-tag v-if="fileName" closable @close="clearFile">{{ fileName }}</el-tag>
           <span v-else class="text-muted">未選擇檔案</span>
         </el-form-item>
+        <p v-if="fileMeta.totalRows" class="file-meta">
+          原始 {{ fileMeta.totalRows }} 列 · 略過非 4 碼 {{ fileMeta.filteredOut }} 列 ·
+          待爬取 {{ stockList.length }} 檔
+        </p>
         <el-form-item label="起始日期">
           <el-date-picker
             v-model="startDate"
@@ -40,9 +51,13 @@
             <el-radio value="adj">還原權息日線（TaiwanStockPriceAdj）</el-radio>
           </el-radio-group>
         </el-form-item>
+        <el-form-item label="併發數">
+          <el-input-number v-model="concurrencyLimit" :min="1" :max="20" :step="1" />
+          <span class="hint">同時處理檔數（預設 10）</span>
+        </el-form-item>
         <el-form-item label="請求間隔">
-          <el-input-number v-model="intervalMs" :min="0" :max="10000" :step="1" />
-          <span class="hint">毫秒（預設 1000 = 1 秒）</span>
+          <el-input-number v-model="intervalMs" :min="0" :max="10000" :step="100" />
+          <span class="hint">每檔完成後間隔毫秒（預設 2500）</span>
         </el-form-item>
         <el-form-item>
           <el-button
@@ -65,9 +80,10 @@
           :status="progress.failed > 0 && !crawling ? 'warning' : undefined"
         />
         <p class="progress-text">
-          {{ progress.current }} / {{ progress.total }}
+          處理中 {{ progress.current }} / {{ progress.total }}
           · 成功 {{ progress.success }} · 略過 {{ progress.skipped }} · 失敗 {{ progress.failed }}
-          <span v-if="currentCode"> · 進行中 {{ currentCode }}</span>
+          <span v-if="runningCount"> · 進行中 {{ runningCount }} 檔（上限 {{ concurrencyLimit }}）</span>
+          <span v-if="currentCode"> · {{ currentCode }}</span>
         </p>
       </div>
     </el-card>
@@ -131,6 +147,7 @@
         class="demo-table"
       >
         <el-table-column prop="trade_date" label="交易日" width="110" sortable />
+        <el-table-column prop="industry" label="產業別" min-width="120" show-overflow-tooltip />
         <el-table-column prop="open_price" label="開" width="72" />
         <el-table-column prop="high_price" label="高" width="72" />
         <el-table-column prop="low_price" label="低" width="72" />
@@ -142,12 +159,14 @@
 
     <el-card v-if="stockList.length" shadow="hover" class="panel">
       <template #header>
-        <span>股票清單（{{ stockList.length }} 檔，已去重、已去除 .TW）</span>
+        <span>股票清單（{{ stockList.length }} 檔，僅 4 碼上市櫃）</span>
       </template>
       <el-table :data="stockList" stripe max-height="480" size="small">
         <el-table-column type="index" label="#" width="56" />
-        <el-table-column prop="code" label="商品代碼" width="120" sortable />
-        <el-table-column prop="name" label="商品名稱" min-width="160" />
+        <el-table-column prop="code" label="股票代碼" width="100" sortable />
+        <el-table-column prop="name" label="股票名稱" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="industry" label="產業別" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="market" label="市場別" width="88" />
         <el-table-column prop="status" label="爬取狀態" width="120">
           <template #default="{ row }">
             <el-tag v-if="row.status === 'success'" type="success" size="small">成功</el-tag>
@@ -166,15 +185,23 @@
 <script setup>
 import { ref, computed, reactive } from 'vue'
 import { ElMessage } from 'element-plus'
-import { extractStocksFromCsvFile, normalizeStockCode } from '@/utils/extractStockCodes'
+import { parseTaiwanStockOverviewCsv, normalizeStockCode } from '@/utils/extractStockCodes'
 import { crawlFinmindStockDaily, crawlFinmindStockDailyAdj } from '@/api/stockCrawl'
 import { supabase, isSupabaseConfigured } from '@/lib/supabase'
+import { runWithConcurrency } from '@/utils/runWithConcurrency'
 
 const fileName = ref('')
 const stockList = ref([])
 const startDate = ref('2020-01-01')
 const endDate = ref('2025-12-31')
-const intervalMs = ref(1000)
+const concurrencyLimit = ref(10)
+const intervalMs = ref(2500)
+const runningCount = ref(0)
+const runningCodes = new Set()
+const fileMeta = reactive({
+  totalRows: 0,
+  filteredOut: 0,
+})
 const crawlType = ref('daily')
 const crawling = ref(false)
 const stopRequested = ref(false)
@@ -209,25 +236,43 @@ const crawlApi = computed(() =>
   crawlType.value === 'adj' ? crawlFinmindStockDailyAdj : crawlFinmindStockDaily
 )
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+function trackRunning(code, active) {
+  if (active) {
+    runningCodes.add(code)
+  } else {
+    runningCodes.delete(code)
+  }
+  runningCount.value = runningCodes.size
+  currentCode.value =
+    runningCodes.size > 0 ? [...runningCodes].slice(0, 3).join('、') : ''
+  if (runningCodes.size > 3) {
+    currentCode.value += ` 等 ${runningCodes.size} 檔`
+  }
+}
 
 const handleFile = async (event) => {
   const file = event.target.files?.[0]
   if (!file) return
 
   try {
-    const stocks = await extractStocksFromCsvFile(file)
+    const { stocks, totalRows, filteredOut } = await parseTaiwanStockOverviewCsv(file)
     stockList.value = stocks.map((s) => ({
       ...s,
       status: 'pending',
       message: '',
     }))
     fileName.value = file.name
-    ElMessage.success(`已解析 ${stocks.length} 檔股票`)
+    fileMeta.totalRows = totalRows
+    fileMeta.filteredOut = filteredOut
+    ElMessage.success(
+      `已解析 ${stocks.length} 檔（略過非 4 碼 ${filteredOut} 列）`
+    )
   } catch (err) {
     ElMessage.error(err.message || 'CSV 解析失敗')
     stockList.value = []
     fileName.value = ''
+    fileMeta.totalRows = 0
+    fileMeta.filteredOut = 0
   }
 
   event.target.value = ''
@@ -236,6 +281,8 @@ const handleFile = async (event) => {
 const clearFile = () => {
   fileName.value = ''
   stockList.value = []
+  fileMeta.totalRows = 0
+  fileMeta.filteredOut = 0
   resetProgress()
 }
 
@@ -245,6 +292,8 @@ const resetProgress = () => {
   progress.success = 0
   progress.skipped = 0
   progress.failed = 0
+  runningCodes.clear()
+  runningCount.value = 0
   currentCode.value = ''
 }
 
@@ -302,6 +351,10 @@ const startCrawl = async () => {
     ElMessage.warning('請選擇起始與結束日期')
     return
   }
+  if (startDate.value > endDate.value) {
+    ElMessage.warning('起始日不可晚於結束日')
+    return
+  }
 
   crawling.value = true
   stopRequested.value = false
@@ -313,50 +366,59 @@ const startCrawl = async () => {
     row.message = ''
   })
 
-  for (let i = 0; i < stockList.value.length; i++) {
-    if (stopRequested.value) {
-      ElMessage.info('已停止爬取')
-      break
-    }
+  await runWithConcurrency(
+    stockList.value,
+    concurrencyLimit.value,
+    async (row) => {
+      if (stopRequested.value) return
 
-    const row = stockList.value[i]
-    row.status = 'running'
-    currentCode.value = row.code
-
-    try {
-      const res = await crawlApi.value({
-        data_id: row.code,
-        start_date: startDate.value,
-        end_date: endDate.value,
-      })
-      if (res.data?.skipped) {
-        row.status = 'skipped'
-        row.message = res.data.reason || '資料庫已有，略過'
-        progress.skipped += 1
-      } else {
-        row.status = 'success'
-        row.message = `寫入 ${res.data?.upserted ?? 0} 筆`
-        progress.success += 1
+      row.status = 'running'
+      trackRunning(row.code, true)
+      try {
+        const res = await crawlApi.value({
+          data_id: row.code,
+          start_date: startDate.value,
+          end_date: endDate.value,
+          stock_name: row.name || undefined,
+          market: row.market || undefined,
+          industry: row.industry || undefined,
+        })
+        if (res.data?.skipped) {
+          row.status = 'skipped'
+          row.message = res.data.reason || '後端略過'
+          progress.skipped += 1
+        } else {
+          row.status = 'success'
+          row.message = `寫入 ${res.data?.upserted ?? 0} 筆`
+          progress.success += 1
+        }
+      } catch (err) {
+        row.status = 'failed'
+        row.message =
+          err.response?.data?.message || err.message || '請求失敗'
+        progress.failed += 1
+      } finally {
+        trackRunning(row.code, false)
       }
-    } catch (err) {
-      row.status = 'failed'
-      row.message =
-        err.response?.data?.message || err.message || '請求失敗'
-      progress.failed += 1
+    },
+    {
+      shouldStop: () => stopRequested.value,
+      delayMs: intervalMs.value,
+      onTaskComplete: (done) => {
+        progress.current = done
+      },
     }
+  )
 
-    progress.current = i + 1
+  stockList.value.forEach((row) => {
+    if (row.status === 'running') row.status = stopRequested.value ? 'pending' : row.status
+  })
 
-    if (i < stockList.value.length - 1 && !stopRequested.value) {
-      await delay(intervalMs.value)
-    }
-  }
-
-  const row = stockList.value.find((r) => r.status === 'running')
-  if (row) row.status = stopRequested.value ? 'pending' : row.status
-
+  runningCodes.clear()
+  runningCount.value = 0
   currentCode.value = ''
   crawling.value = false
+  progress.current = progress.total
 
   if (!stopRequested.value) {
     ElMessage.success(
@@ -400,6 +462,16 @@ const startCrawl = async () => {
   margin-top: 8px;
   font-size: 13px;
   color: var(--el-text-color-regular);
+}
+
+.format-alert {
+  margin-bottom: 16px;
+}
+
+.file-meta {
+  margin: -8px 0 16px 100px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
 }
 
 .demo-alert {
