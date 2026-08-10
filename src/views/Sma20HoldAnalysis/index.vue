@@ -235,6 +235,8 @@ import {
   DEFAULT_SMA20_PARAMS,
   normalizeSma20Params,
   resolveBaseExitPrice,
+  resolveBuyPrice,
+  calcReturnFromPrices,
 } from '@/utils/sma20ExtendedHold'
 import { StockPriceCache } from '@/utils/stockPriceCache'
 
@@ -353,6 +355,26 @@ const fmtPct = (dec) => {
 const fmtPrice = (val) => {
   if (val == null || Number.isNaN(val)) return '—'
   return Number(val).toFixed(4)
+}
+
+/**
+ * 有 DB 股價時，以 DB 進出場價重算基礎天數報酬（與 SMA 報酬同一資料源）
+ * @param {object} row 表格列
+ * @param {object[]} prices 日線
+ * @param {object} trade normalizeTradeRow 結果
+ * @param {number} [buyPxOverride] 已解析的進場價（延伸計算結果）
+ */
+function applyDbBaseHoldReturn(row, prices, trade, buyPxOverride) {
+  const buyPx =
+    buyPxOverride ?? resolveBuyPrice(prices, trade.buyDay, trade.buyPrice)
+  const exit60Px = resolveBaseExitPrice(prices, trade.sellDay, trade.sellPrice)
+  const baseReturn = calcReturnFromPrices(buyPx, exit60Px)
+  if (baseReturn == null) return
+
+  row.buyPrice = fmtPrice(buyPx)
+  row.exit60Price = fmtPrice(exit60Px)
+  row.returnDecimal = baseReturn
+  row.return60Pct = fmtPct(baseReturn)
 }
 
 const parsePriceCol = (v) => (v === '—' || v == null ? null : Number(v))
@@ -517,7 +539,8 @@ const runAnalysis = async () => {
         if (!ext.ok) {
           row.skippedSmaEntry = Boolean(ext.skippedSmaEntry)
           row.note = ext.reason || `計算失敗，維持 ${params.baseHoldDays} 天`
-          row.sma20ReturnPct = fmtPct(trade.returnDecimal)
+          applyDbBaseHoldReturn(row, prices, trade)
+          row.sma20ReturnPct = fmtPct(row.returnDecimal ?? trade.returnDecimal)
           processed.push({ ...row, raw, trade })
           nextResultRows.push(row)
           nextExportRows.push(buildExportRow(raw, { useSma20Return: false }))
@@ -528,15 +551,11 @@ const runAnalysis = async () => {
         row.extended = ext.extended
         row.exitDay = ext.exitDay || trade.sellDay || '—'
         row.sma20Return = ext.sma20Return
-        row.returnDecimal = trade.returnDecimal
+        applyDbBaseHoldReturn(row, prices, trade, ext.buyPriceUsed)
         row.sma20ReturnPct = fmtPct(ext.sma20Return)
         row.totalHoldDays = ext.totalHoldDays
         row.exitSma20 =
           ext.exitSma20 != null ? Number(ext.exitSma20).toFixed(4) : '—'
-        row.buyPrice = fmtPrice(ext.buyPriceUsed)
-        row.exit60Price = fmtPrice(
-          resolveBaseExitPrice(prices, trade.sellDay, trade.sellPrice)
-        )
         row.smaExitPrice = fmtPrice(ext.exitPrice)
         row.useSma20Return = true
         row.note =
