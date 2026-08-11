@@ -17,7 +17,8 @@ export function normalizeTradeDateKey(raw) {
 
 /**
  * @typedef {Object} PriceBar
- * @property {number} open
+ * @property {number|null} open
+ * @property {number|null} high
  * @property {number} close
  * @property {number} volume
  * @property {number} amount
@@ -82,12 +83,14 @@ export function buildEligibleUniverse(rows) {
 
 function toBar(row) {
   const open = Number(row.open_price)
+  const high = Number(row.high_price)
   const close = Number(row.close_price)
   const volume = Number(row.volume)
   const amount = Number(row.amount)
   if (!Number.isFinite(close) || close <= 0) return null
   return {
     open: Number.isFinite(open) && open > 0 ? open : null,
+    high: Number.isFinite(high) && high > 0 ? high : null,
     close,
     volume: Number.isFinite(volume) ? volume : 0,
     amount: Number.isFinite(amount) ? amount : 0,

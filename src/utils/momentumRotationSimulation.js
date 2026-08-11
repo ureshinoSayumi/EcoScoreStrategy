@@ -6,6 +6,8 @@ import { indexOfDate, normalizeTradeDateKey } from '@/utils/momentumRotationData
 
 /** @typedef {import('./momentumRotationData.js').StockSeries} StockSeries */
 
+export const LIMIT_UP_BUY_THRESHOLD = 0.0999
+
 export const DEFAULT_MOMENTUM_PARAMS = {
   topCount: 50,
   rebalanceInterval: 30,
@@ -13,6 +15,7 @@ export const DEFAULT_MOMENTUM_PARAMS = {
   initialCapital: 10000,
   feeRate: 0.003,
   minVolumeLots: 50,
+  skipLimitUpBuy: false,
   lookbackDays: null, // null = 同 rebalanceInterval
 }
 
@@ -37,6 +40,7 @@ export function normalizeMomentumParams(input = {}) {
       0,
       Number(input.minVolumeLots) ?? DEFAULT_MOMENTUM_PARAMS.minVolumeLots
     ),
+    skipLimitUpBuy: Boolean(input.skipLimitUpBuy),
     lookbackDays: input.lookbackDays != null
       ? Math.max(1, Math.floor(Number(input.lookbackDays)))
       : rebalanceInterval,
@@ -67,6 +71,49 @@ export function isTradableOnDay(series, date, minVolumeLots) {
   if (bar.open == null || !Number.isFinite(bar.open) || bar.open <= 0) return false
   if (bar.volume < minVolumeShares(minVolumeLots)) return false
   return true
+}
+
+export function calcGainFromPrevClose(price, prevClose) {
+  if (price == null || !Number.isFinite(price) || price <= 0) return null
+  if (!prevClose || prevClose <= 0) return null
+  return (price - prevClose) / prevClose
+}
+
+/** 建倉／加碼日是否因漲停（≥9.99%）應跳過買入 */
+export function isLimitUpOnBuyDay(
+  series,
+  calendar,
+  actionIdx,
+  tradeDate,
+  threshold = LIMIT_UP_BUY_THRESHOLD
+) {
+  if (actionIdx <= 0) return false
+
+  const prevBar = getBar(series, calendar[actionIdx - 1])
+  const prevClose = prevBar?.close
+  if (!prevClose || prevClose <= 0) return false
+
+  const bar = getBar(series, tradeDate)
+  if (!bar) return false
+
+  const openGain = calcGainFromPrevClose(bar.open, prevClose)
+  const highGain = calcGainFromPrevClose(bar.high, prevClose)
+
+  return (
+    (openGain != null && openGain >= threshold) ||
+    (highGain != null && highGain >= threshold)
+  )
+}
+
+function shouldSkipBuyOnDay(series, calendar, actionIdx, tradeDate, minVolumeLots, skipLimitUpBuy) {
+  if (!isTradableOnDay(series, tradeDate, minVolumeLots)) return true
+  if (
+    skipLimitUpBuy &&
+    isLimitUpOnBuyDay(series, calendar, actionIdx, tradeDate)
+  ) {
+    return true
+  }
+  return false
 }
 
 /**
@@ -294,6 +341,7 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     initialCapital,
     feeRate,
     minVolumeLots,
+    skipLimitUpBuy,
     lookbackDays,
   } = params
 
@@ -369,14 +417,22 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       return []
     }
 
-    const perStock = budget / picks.length
+    const perStock = budget / topCount
     /** @type {Position[]} */
     const opened = []
     /** @type {object[]} */
     const buyRecords = []
 
-    for (const pick of picks) {
-      const bar = getBar(stockData.get(pick.stockId), actionDate)
+    for (const pick of ranked) {
+      if (opened.length >= topCount) break
+
+      const series = stockData.get(pick.stockId)
+      if (!series) continue
+      if (shouldSkipBuyOnDay(series, calendar, actionIdx, actionDate, minVolumeLots, skipLimitUpBuy)) {
+        continue
+      }
+
+      const bar = getBar(series, actionDate)
       if (!bar) continue
       const bought = buyAtOpen(perStock, bar.open, feeRate)
       if (!bought) continue
@@ -465,8 +521,12 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     if (soldRecords.length && survivors.length) {
       const addonEach = sellProceeds / survivors.length
       for (const pos of survivors) {
-        const bar = getBar(stockData.get(pos.stockId), actionDate)
-        if (!bar || !isTradableOnDay(stockData.get(pos.stockId), actionDate, minVolumeLots)) {
+        const series = stockData.get(pos.stockId)
+        const bar = getBar(series, actionDate)
+        if (
+          !bar ||
+          shouldSkipBuyOnDay(series, calendar, actionIdx, actionDate, minVolumeLots, skipLimitUpBuy)
+        ) {
           cash += addonEach
           continue
         }

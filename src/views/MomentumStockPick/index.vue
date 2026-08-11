@@ -83,6 +83,16 @@
           />
           <span class="field-hint">張（換倉日低於此量跳過）</span>
         </el-form-item>
+        <el-form-item label="跳過漲停">
+          <el-switch
+            v-model="skipLimitUpBuy"
+            inline-prompt
+            active-text="是"
+            inactive-text="否"
+            :disabled="loading || running"
+          />
+          <span class="field-hint">建倉／加碼時，開盤或最高價較前一日收盤漲 ≥9.99% 則跳過</span>
+        </el-form-item>
         <el-form-item label="輸出圖表">
           <el-switch v-model="outputChart" inline-prompt active-text="是" inactive-text="否" />
         </el-form-item>
@@ -397,6 +407,7 @@ const roundCycles = ref(DEFAULT_MOMENTUM_PARAMS.roundCycles)
 const initialCapital = ref(DEFAULT_MOMENTUM_PARAMS.initialCapital)
 const feePercent = ref(DEFAULT_MOMENTUM_PARAMS.feeRate * 100)
 const minVolumeLots = ref(DEFAULT_MOMENTUM_PARAMS.minVolumeLots)
+const skipLimitUpBuy = ref(DEFAULT_MOMENTUM_PARAMS.skipLimitUpBuy)
 const outputChart = ref(true)
 
 const loading = ref(false)
@@ -696,6 +707,7 @@ async function runBacktest() {
       initialCapital: initialCapital.value,
       feeRate: feePercent.value / 100,
       minVolumeLots: minVolumeLots.value,
+      skipLimitUpBuy: skipLimitUpBuy.value,
     })
 
     result.value = backtest
