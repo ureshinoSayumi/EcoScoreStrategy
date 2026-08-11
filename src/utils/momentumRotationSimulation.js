@@ -12,6 +12,8 @@ export const DEFAULT_MOMENTUM_PARAMS = {
   topCount: 50,
   rebalanceInterval: 30,
   roundCycles: 3,
+  holdingMode: 'cycles',
+  maxHoldingDays: 90,
   initialCapital: 10000,
   feeRate: 0.003,
   minVolumeLots: 50,
@@ -30,6 +32,11 @@ export function normalizeMomentumParams(input = {}) {
     roundCycles: Math.max(
       1,
       Math.floor(Number(input.roundCycles) || DEFAULT_MOMENTUM_PARAMS.roundCycles)
+    ),
+    holdingMode: input.holdingMode === 'maxDays' ? 'maxDays' : 'cycles',
+    maxHoldingDays: Math.max(
+      1,
+      Math.floor(Number(input.maxHoldingDays) || DEFAULT_MOMENTUM_PARAMS.maxHoldingDays)
     ),
     initialCapital: Math.max(
       1,
@@ -114,6 +121,27 @@ function shouldSkipBuyOnDay(series, calendar, actionIdx, tradeDate, minVolumeLot
     return true
   }
   return false
+}
+
+/** 依持股模式計算一輪長度與汰弱偏移（交易日） */
+export function buildRoundPlan(params) {
+  const { holdingMode, roundCycles, rebalanceInterval, maxHoldingDays } = params
+
+  if (holdingMode === 'maxDays') {
+    const roundTradingDays = maxHoldingDays
+    const cullOffsets = []
+    for (let offset = rebalanceInterval; offset < roundTradingDays; offset += rebalanceInterval) {
+      cullOffsets.push(offset)
+    }
+    return { roundTradingDays, cullOffsets }
+  }
+
+  const roundTradingDays = roundCycles * rebalanceInterval
+  const cullOffsets = []
+  for (let c = 1; c < roundCycles; c++) {
+    cullOffsets.push(c * rebalanceInterval)
+  }
+  return { roundTradingDays, cullOffsets }
 }
 
 /**
@@ -338,6 +366,8 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     topCount,
     rebalanceInterval,
     roundCycles,
+    holdingMode,
+    maxHoldingDays,
     initialCapital,
     feeRate,
     minVolumeLots,
@@ -346,11 +376,7 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
   } = params
 
   const universeIds = [...stockData.keys()]
-  const roundTradingDays = roundCycles * rebalanceInterval
-  const cullOffsets = []
-  for (let c = 1; c < roundCycles; c++) {
-    cullOffsets.push(c * rebalanceInterval)
-  }
+  const { roundTradingDays, cullOffsets } = buildRoundPlan(params)
 
   let cash = initialCapital
   /** @type {Position[]} */
@@ -481,7 +507,10 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
 
   function cullWeak(actionDate, actionIdx) {
     if (positions.length <= 1) {
-      return { earlySettle: true, reason: '僅剩 1 檔，無法汰弱' }
+      return {
+        earlySettle: holdingMode === 'cycles',
+        reason: '僅剩 1 檔，無法汰弱',
+      }
     }
 
     const heldIds = positions.map((p) => p.stockId)
@@ -574,7 +603,7 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     return { earlySettle: false }
   }
 
-  function settleAll(actionDate, roundStartCash) {
+  function settleAll(actionDate, roundStartCash, extra = {}) {
     const soldRecords = []
     for (const pos of positions) {
       const result = executeSell(pos, actionDate)
@@ -611,6 +640,9 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       endingCash: netBefore,
       returnPct: Math.round((netBefore / roundStartCash - 1) * 10000) / 100,
       pickCount: soldRecords.length,
+      holdingMode,
+      plannedHoldDays: roundTradingDays,
+      ...extra,
     })
 
     return netBefore
@@ -622,7 +654,9 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     const roundStartDate = calendar[roundStartIdx]
     const roundStartCash = cash
 
-    if (roundStartIdx + roundTradingDays > lastAllowedIdx) break
+    const idealSettleIdx = roundStartIdx + roundTradingDays
+    let settleIdx = Math.min(idealSettleIdx, lastAllowedIdx)
+    const forcedEndSettle = idealSettleIdx > lastAllowedIdx
 
     positions = openInitialPositions(roundStartDate, roundStartIdx)
 
@@ -634,23 +668,28 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
         endingCash: roundStartCash,
         returnPct: 0,
         pickCount: 0,
+        holdingMode,
+        plannedHoldDays: roundTradingDays,
         note: '無法建倉',
       })
       break
     }
 
-    let settleIdx = roundStartIdx + roundTradingDays
     let earlySettle = false
 
     for (const offset of cullOffsets) {
       const cullIdx = roundStartIdx + offset
+      if (cullIdx > settleIdx) break
       if (cullIdx > lastAllowedIdx) break
       const cullDate = calendar[cullIdx]
 
       if (positions.length <= 1) {
-        settleIdx = cullIdx
-        earlySettle = true
-        break
+        if (holdingMode === 'cycles') {
+          settleIdx = cullIdx
+          earlySettle = true
+          break
+        }
+        continue
       }
 
       const cullResult = cullWeak(cullDate, cullIdx)
@@ -662,11 +701,11 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     }
 
     const settleDate = calendar[settleIdx]
-    settleAll(settleDate, roundStartCash)
-
-    if (earlySettle) {
-      roundSummaries[roundSummaries.length - 1].earlySettle = true
-    }
+    settleAll(settleDate, roundStartCash, {
+      earlySettle: earlySettle && holdingMode === 'cycles',
+      forcedEndSettle,
+      note: forcedEndSettle ? '回測結束強制結算' : undefined,
+    })
 
     startIdx = settleIdx + 1
     if (startIdx > lastAllowedIdx) break
@@ -695,6 +734,7 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     finalReturnPct: Math.round((finalCash / initialCapital - 1) * 10000) / 100,
     maxDrawdownPct: Math.round(maxDrawdown * 10000) / 100,
     stats: buildTradeStats(tradeReturns),
+    roundStats: buildRoundStats(roundSummaries),
   }
 }
 
@@ -711,6 +751,29 @@ function calcMaxDrawdown(history, initialCapital) {
     }
   }
   return maxDd
+}
+
+function buildRoundStats(roundSummaries) {
+  const rounds = roundSummaries.filter((r) => r.note !== '無法建倉')
+  if (!rounds.length) {
+    return { avgReturnPct: 0, medianReturnPct: 0, winRatePct: 0, roundCount: 0 }
+  }
+
+  const returns = rounds.map((r) => Number(r.returnPct)).filter((r) => Number.isFinite(r))
+  const wins = rounds.filter((r) => Number(r.endingCash) > Number(r.startingCash)).length
+  const sorted = [...returns].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  const median =
+    sorted.length % 2 === 1
+      ? sorted[mid]
+      : (sorted[mid - 1] + sorted[mid]) / 2
+
+  return {
+    roundCount: rounds.length,
+    avgReturnPct: Math.round((returns.reduce((a, b) => a + b, 0) / returns.length) * 100) / 100,
+    medianReturnPct: Math.round(median * 100) / 100,
+    winRatePct: Math.round((wins / rounds.length) * 10000) / 100,
+  }
 }
 
 function buildTradeStats(returns) {

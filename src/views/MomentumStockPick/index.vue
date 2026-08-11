@@ -13,7 +13,7 @@
         :closable="false"
         class="mb-12"
         title="策略規則"
-        description="每輪：選過去 Y 日漲幅前 X 檔等權買入（開盤價）→ 每 Y 交易日賣掉持倉中漲幅最差 ceil(n/2) 檔，資金平均加碼至存活標的 → 滿 roundCycles×Y 交易日全數結算 → 下一交易日重新選股。僅 4 碼普通股，排除 ETF／DR。"
+        description="每輪：選過去 Y 日漲幅前 X 檔等權買入（開盤價）→ 每 Y 交易日汰弱留強、加碼存活標的 → 持滿一輪週期或最大持股天數後結算 → 下一交易日重新選股。僅 4 碼普通股，排除 ETF／DR。"
       />
 
       <el-form label-width="130px">
@@ -48,11 +48,29 @@
           />
           <span class="field-hint">交易日；漲幅排名亦取過去 Y 日</span>
         </el-form-item>
-        <el-form-item label="一輪週期數">
+        <el-form-item label="持股週期">
+          <el-radio-group v-model="holdingMode" :disabled="loading || running">
+            <el-radio value="cycles">週期數模式</el-radio>
+            <el-radio value="maxDays">最大持股天數</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="holdingMode === 'cycles'" label="一輪週期數">
           <el-input-number v-model="roundCycles" :min="1" :max="12" :disabled="loading || running" />
           <span class="field-hint">
             一輪 = {{ roundCycles }}×Y = {{ roundCycles * rebalanceInterval }} 交易日；
-            汰弱 {{ Math.max(0, roundCycles - 1) }} 次後結算
+            汰弱 {{ Math.max(0, roundCycles - 1) }} 次後結算；剩 1 檔提前結算
+          </span>
+        </el-form-item>
+        <el-form-item v-else label="最大持股天數">
+          <el-input-number
+            v-model="maxHoldingDays"
+            :min="1"
+            :max="500"
+            :disabled="loading || running"
+          />
+          <span class="field-hint">
+            持滿 {{ maxHoldingDays }} 交易日結算；每 Y 日汰弱
+            {{ maxCullCount }} 次；剩 1 檔不提前賣，持有至結算日
           </span>
         </el-form-item>
         <el-form-item label="初始資金">
@@ -155,6 +173,16 @@
         <el-descriptions-item label="賣出平均報酬">
           {{ result.stats.avgReturn.toFixed(2) }}%
         </el-descriptions-item>
+        <el-descriptions-item label="每輪平均報酬">
+          {{ result.roundStats.avgReturnPct.toFixed(2) }}%
+        </el-descriptions-item>
+        <el-descriptions-item label="每輪中位數報酬">
+          {{ result.roundStats.medianReturnPct.toFixed(2) }}%
+        </el-descriptions-item>
+        <el-descriptions-item label="每輪勝率">
+          {{ result.roundStats.winRatePct.toFixed(2) }}%
+          <span class="hint-inline">（{{ result.roundStats.roundCount }} 輪）</span>
+        </el-descriptions-item>
       </el-descriptions>
     </el-card>
 
@@ -184,10 +212,10 @@
           </template>
         </el-table-column>
         <el-table-column prop="pickCount" label="結算檔數" width="88" align="center" />
-        <el-table-column label="備註" min-width="120">
+        <el-table-column label="備註" min-width="140">
           <template #default="{ row }">
-            <span v-if="row.earlySettle">提前結算（僅剩 1 檔）</span>
-            <span v-else-if="row.note">{{ row.note }}</span>
+            <span v-if="row.note">{{ row.note }}</span>
+            <span v-else-if="row.earlySettle">提前結算（僅剩 1 檔）</span>
             <span v-else>—</span>
           </template>
         </el-table-column>
@@ -404,6 +432,8 @@ const endDate = ref('2025-12-31')
 const topCount = ref(DEFAULT_MOMENTUM_PARAMS.topCount)
 const rebalanceInterval = ref(DEFAULT_MOMENTUM_PARAMS.rebalanceInterval)
 const roundCycles = ref(DEFAULT_MOMENTUM_PARAMS.roundCycles)
+const holdingMode = ref(DEFAULT_MOMENTUM_PARAMS.holdingMode)
+const maxHoldingDays = ref(DEFAULT_MOMENTUM_PARAMS.maxHoldingDays)
 const initialCapital = ref(DEFAULT_MOMENTUM_PARAMS.initialCapital)
 const feePercent = ref(DEFAULT_MOMENTUM_PARAMS.feeRate * 100)
 const minVolumeLots = ref(DEFAULT_MOMENTUM_PARAMS.minVolumeLots)
@@ -435,6 +465,21 @@ const progressText = computed(() => {
   if (!progressTotal.value) return progressPhase.value
   return `${progressPhase.value} ${progressCurrent.value} / ${progressTotal.value}`
 })
+
+const maxCullCount = computed(() => {
+  const y = rebalanceInterval.value
+  const max = maxHoldingDays.value
+  if (!y || !max) return 0
+  let count = 0
+  for (let offset = y; offset < max; offset += y) count += 1
+  return count
+})
+
+const holdingSpanDays = computed(() =>
+  holdingMode.value === 'maxDays'
+    ? maxHoldingDays.value
+    : roundCycles.value * rebalanceInterval.value
+)
 
 const TYPE_LABELS = {
   round_buy: '建倉',
@@ -595,7 +640,7 @@ async function runBacktest() {
 
   try {
     const lookback = rebalanceInterval.value
-    const padCalendarDays = Math.ceil(lookback * 1.6) + roundCycles.value * rebalanceInterval.value
+    const padCalendarDays = Math.ceil(lookback * 1.6) + holdingSpanDays.value
     const calendarStart = shiftDateString(startDate.value, -padCalendarDays)
 
     progressPhase.value = '載入交易日曆'
@@ -704,6 +749,8 @@ async function runBacktest() {
       topCount: topCount.value,
       rebalanceInterval: rebalanceInterval.value,
       roundCycles: roundCycles.value,
+      holdingMode: holdingMode.value,
+      maxHoldingDays: maxHoldingDays.value,
       initialCapital: initialCapital.value,
       feeRate: feePercent.value / 100,
       minVolumeLots: minVolumeLots.value,
