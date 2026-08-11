@@ -49,6 +49,7 @@ const routeItems = computed(() => {
     '2xETFvsSMA200': '2倍ETF vs SMA200',
     strategyCompare: '策略選股比較',
     holdingsRecord: '持股紀錄',
+    momentumStockPick: '動能選股',
     about: '關於',
   }
   return routes
