@@ -67,6 +67,12 @@ const router = createRouter({
       name: 'holdingsRecord',
       component: () => import('@/views/HoldingsRecord/HoldingsRecordView.vue'),
     },
+    // 動能選股回測
+    {
+      path: '/momentumStockPick',
+      name: 'momentumStockPick',
+      component: () => import('@/views/MomentumStockPick/index.vue'),
+    },
     {
       path: '/about',
       name: 'about',

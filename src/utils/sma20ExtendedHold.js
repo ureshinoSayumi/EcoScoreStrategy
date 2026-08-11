@@ -495,4 +495,15 @@ export function computeAnalysis(processedRows) {
   }
 }
 
+/**
+ * 依進出場價計算報酬小數（exit − buy）/ buy
+ * @returns {number|null}
+ */
+export function calcReturnFromPrices(buyPrice, exitPrice) {
+  const buy = Number(buyPrice)
+  const exit = Number(exitPrice)
+  if (!Number.isFinite(buy) || !Number.isFinite(exit) || buy <= 0) return null
+  return (exit - buy) / buy
+}
+
 export { parseReturnDecimal, parsePrice, resolveBuyPrice, resolveBaseExitPrice }
