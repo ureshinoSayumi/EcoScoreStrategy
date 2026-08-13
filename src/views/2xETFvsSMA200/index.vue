@@ -244,13 +244,13 @@ const runTest = (
   const bh = runBuyAndHold(rawBars, initialCapital);
 
   // 用QLD 200SMA 當訊號來源
-  const sma = runSMAQQQ(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee);
+  // const sma = runSMAQQQ(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee);
 
-  // 用QLD 200SMA 當訊號來源，用QQQ取代現金
-  // const smaQQQ = runSMAQQQ(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee, qqqData.value);
+  // 用QQQ 200SMA 當訊號來源，用QQQ取代現金
+  const smaQQQ = runSMAQQQ(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee, qqqData.value);
 
-  // 用QQQ 200SMA 當訊號來源
-  const smaQQQ = runSMAFORQQQ(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee, qqqData.value);
+  // 用QQQ 200SMA 當訊號來源，跌破改抱現金
+  const sma = runSMAFORQQQ(rawBars, window, initialCapital, enterSensitive, exitSensitive, buyBand, sellBand, fee, qqqData.value);
 
   const dca = runDcaSmaQQQ(
     rawBars,
@@ -372,7 +372,8 @@ const runTest = (
     };
   }
 
-  // 策略2：SMA200 站上就持有QLD、跌破就賣出，或改持有QQQ，用今天收盤決定明天持倉
+  // 策略2：SMA200 站上就持有QLD、跌破改持有QQQ（無 QQQ 資料時等同現金）
+  // 有傳 qqqBarsRaw → 用 QQQ 200SMA 當訊號；否則用 QLD 200SMA
   function runSMAQQQ(
     rawBars,
     window = 200,
@@ -405,7 +406,8 @@ const runTest = (
 
     // --- QQQ map：date2 -> {close, high, low} ---
     const qqqMap = new Map();
-    if (Array.isArray(qqqBarsRaw)) {
+    const useQQQSignal = Array.isArray(qqqBarsRaw) && qqqBarsRaw.length > 0;
+    if (useQQQSignal) {
       for (const r of qqqBarsRaw) {
         qqqMap.set(r.Date, {
           close: Number(r.Close),
@@ -415,7 +417,7 @@ const runTest = (
         });
       }
     } else {
-      console.warn("你沒有傳入 qqqBarsRaw（qqqData.value），QQQ 報酬會視為 0，且無法做 High/Low 成交懲罰");
+      console.warn("你沒有傳入 qqqBarsRaw（qqqData.value），訊號改用 QLD SMA，QQQ 報酬視為 0");
     }
 
     const getQQQBar = (date2) => qqqMap.get(date2) ?? null;
@@ -427,12 +429,33 @@ const runTest = (
       return null; // CASH
     }
 
-    // --- SMA ---
-    let sum = 0;
-    for (let i = 0; i < n; i++) {
-      sum += bars[i].close;
-      if (i >= window) sum -= bars[i - window].close;
-      bars[i].sma = i >= window - 1 ? sum / window : null;
+    // --- SMA：有 QQQ 資料用 QQQ SMA 當訊號，否則用 QLD SMA ---
+    if (useQQQSignal) {
+      let qqqSum = 0;
+      const qqqCloseWindow = [];
+      for (let i = 0; i < n; i++) {
+        const qqqBar = getQQQBar(bars[i].date2);
+        if (!qqqBar || !Number.isFinite(qqqBar.close)) {
+          bars[i].sma = null;
+          bars[i].signalClose = null;
+          continue;
+        }
+        qqqCloseWindow.push(qqqBar.close);
+        qqqSum += qqqBar.close;
+        if (qqqCloseWindow.length > window) {
+          qqqSum -= qqqCloseWindow.shift();
+        }
+        bars[i].sma = qqqCloseWindow.length === window ? qqqSum / window : null;
+        bars[i].signalClose = qqqBar.close;
+      }
+    } else {
+      let sum = 0;
+      for (let i = 0; i < n; i++) {
+        sum += bars[i].close;
+        if (i >= window) sum -= bars[i - window].close;
+        bars[i].sma = i >= window - 1 ? sum / window : null;
+        bars[i].signalClose = bars[i].close;
+      }
     }
 
     // --- 回測 ---
@@ -487,16 +510,17 @@ const runTest = (
       rets.push(usedRet);
 
 
-      // --- 用今天收盤決定明天持倉 ---
+      // --- 用今天收盤決定明天持倉（訊號價：QQQ 或 QLD）---
       const sma = bar.sma;
+      const signalClose = bar.signalClose;
       let nextHolding = holding;
 
-      if (sma === null) {
+      if (sma === null || !Number.isFinite(signalClose)) {
           aboveCount = 0;
           belowCount = 0;
           nextHolding = "CASH";
         } else {
-        const relDiff = (bar.close - sma) / sma;
+        const relDiff = (signalClose - sma) / sma;
 
           if (relDiff > (buyBand / 100)) {
             aboveCount++;
@@ -1082,6 +1106,7 @@ const backtestSMA200 = (data) => {
   bhBestAnnualReturn.value = result.buyAndHold.annualReturns.reduce((max, item) => item.return > max ? item.return : max, 0); // 最佳年度報酬率
   bhMedianAnnualReturn.value = result.buyAndHold.annualReturns.reduce((median, item) => { return median + item.return }, 0) / result.buyAndHold.annualReturns.length; // 年度中位數報酬率
 
+  // 定期定額 DCA 策略
   if (result.dcaStrategy) {
     dcaTotalReturn.value = result.dcaStrategy.totalReturnPercent;
     dcaMaxDrawdownValue.value = result.dcaStrategy.maxDrawdown;
