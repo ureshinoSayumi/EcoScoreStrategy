@@ -9,7 +9,10 @@ import { indexOfDate, normalizeTradeDateKey } from '@/utils/momentumRotationData
 export const LIMIT_UP_BUY_THRESHOLD = 0.0999
 
 export const DEFAULT_MOMENTUM_PARAMS = {
-  topCount: 50,
+  /** 每輪目標持股檔數（等權切分預算用） */
+  holdCount: 50,
+  /** 略過漲幅榜前 N 名後再往下選 */
+  skipTop: 0,
   rebalanceInterval: 30,
   roundCycles: 3,
   holdingMode: 'cycles',
@@ -28,8 +31,17 @@ export function normalizeMomentumParams(input = {}) {
     1,
     Math.floor(Number(input.rebalanceInterval) || DEFAULT_MOMENTUM_PARAMS.rebalanceInterval)
   )
+  const holdCountRaw =
+    input.holdCount != null ? input.holdCount : input.topCount
   return {
-    topCount: Math.max(1, Math.floor(Number(input.topCount) || DEFAULT_MOMENTUM_PARAMS.topCount)),
+    holdCount: Math.max(
+      1,
+      Math.floor(Number(holdCountRaw) || DEFAULT_MOMENTUM_PARAMS.holdCount)
+    ),
+    skipTop: Math.max(
+      0,
+      Math.floor(Number(input.skipTop) || DEFAULT_MOMENTUM_PARAMS.skipTop)
+    ),
     rebalanceInterval,
     roundCycles: Math.max(
       1,
@@ -278,7 +290,8 @@ export function diagnoseRankFailure(
 }
 
 /**
- * 從 fromIdx 起往後找第一個可建倉的交易日（至少 minPicks 檔通過動能篩選）
+ * 從 fromIdx 起往後找第一個可建倉的交易日
+ * （略過前 skipTop 名後，至少還有 minPicks 檔可交易）
  * @returns {number} 索引；-1 表示找不到
  */
 export function findFirstValidActionIdx(
@@ -289,10 +302,13 @@ export function findFirstValidActionIdx(
   lookbackDays,
   minVolumeLots,
   minPicks = 1,
-  buyHighSellLow = false
+  buyHighSellLow = false,
+  skipTop = 0
 ) {
   const minIdx = getMinActionIdx(lookbackDays)
   const start = Math.max(fromIdx, minIdx)
+  const skip = Math.max(0, Math.floor(Number(skipTop) || 0))
+  const need = Math.max(1, Math.floor(Number(minPicks) || 1))
 
   for (let idx = start; idx < calendar.length; idx++) {
     const ranked = rankByMomentum(
@@ -302,9 +318,18 @@ export function findFirstValidActionIdx(
       idx,
       lookbackDays,
       minVolumeLots,
-      { requireTradable: true, buyHighSellLow }
+      { requireTradable: false, buyHighSellLow }
     )
-    if (ranked.length >= minPicks) return idx
+    const afterSkip = ranked.slice(skip)
+    let ok = 0
+    for (const pick of afterSkip) {
+      const series = stockData.get(pick.stockId)
+      if (series && isTradableOnDay(series, calendar[idx], minVolumeLots, buyHighSellLow)) {
+        ok += 1
+        if (ok >= need) break
+      }
+    }
+    if (ok >= need) return idx
   }
   return -1
 }
@@ -405,7 +430,8 @@ function snapshotState(cash, positions, stockData, date, initialCapital) {
 export function runMomentumRotationBacktest(stockData, calendar, rawParams = {}) {
   const params = normalizeMomentumParams(rawParams)
   const {
-    topCount,
+    holdCount,
+    skipTop,
     rebalanceInterval,
     roundCycles,
     holdingMode,
@@ -470,10 +496,10 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       actionIdx,
       lookbackDays,
       minVolumeLots,
-      { requireTradable: true, buyHighSellLow }
+      { requireTradable: false, buyHighSellLow }
     )
-    const picks = ranked.slice(0, topCount)
-    if (!picks.length) {
+    const candidates = ranked.slice(skipTop)
+    if (!candidates.length) {
       const reason = diagnoseRankFailure(
         universeIds,
         stockData,
@@ -483,19 +509,24 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
         minVolumeLots,
         buyHighSellLow
       )
-      recordEvent('buy_skip', actionDate, { reason })
+      recordEvent('buy_skip', actionDate, {
+        reason: `略過前 ${skipTop} 名後無可選標的；${reason}`,
+        skipTop,
+        holdCount,
+      })
       return []
     }
 
-    const perStock = budget / topCount
+    const perStock = budget / holdCount
     /** @type {Position[]} */
     const opened = []
     /** @type {object[]} */
     const buyRecords = []
 
-    for (const pick of ranked) {
-      if (opened.length >= topCount) break
+    for (let i = 0; i < candidates.length; i++) {
+      if (opened.length >= holdCount) break
 
+      const pick = candidates[i]
       const series = stockData.get(pick.stockId)
       if (!series) continue
       if (
@@ -518,6 +549,7 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       const bought = buyAtOpen(perStock, buyPrice, feeRate)
       if (!bought) continue
       cash -= perStock
+      const momentumRank = skipTop + i + 1
       const pos = {
         stockId: pick.stockId,
         stockName: pick.stockName,
@@ -537,12 +569,15 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
         buyAmount: perStock,
         shares: bought.shares,
         momentumReturnPct: toMomentumPct(pick.return),
+        momentumRank,
       })
     }
 
     recordEvent('round_buy', actionDate, {
       buys: buyRecords,
       pickCount: buyRecords.length,
+      holdCount,
+      skipTop,
       budget,
       fillMode: buyHighSellLow ? 'buy_high_sell_low' : 'open',
     }, opened)

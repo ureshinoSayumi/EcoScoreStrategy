@@ -13,7 +13,7 @@
         :closable="false"
         class="mb-12"
         title="策略規則"
-        description="每輪：選過去 Y 日漲幅前 X 檔等權買入 → 每 Y 交易日汰弱留強、加碼存活標的 → 持滿一輪週期或最大持股天數後結算 → 下一交易日重新選股。預設開盤價成交；可開「買高賣低」測最倒楣（買最高／賣最低）。僅 4 碼普通股，排除 ETF／DR。"
+        description="每輪：略過漲幅榜前 N 名後，往下選滿持股檔數（等權；買不滿也開輪）→ 每 Y 交易日汰弱留強、加碼存活標的 → 持滿一輪後結算再重選。預設開盤價；可開「買高賣低」。僅 4 碼普通股，排除 ETF／DR。"
       />
 
       <el-form label-width="130px">
@@ -36,8 +36,22 @@
         </el-form-item>
 
         <el-divider content-position="left">策略參數</el-divider>
-        <el-form-item label="持股檔數 X">
-          <el-input-number v-model="topCount" :min="1" :max="200" :disabled="loading || running" />
+        <el-form-item label="持股檔數">
+          <el-input-number
+            v-model="holdCount"
+            :min="1"
+            :max="200"
+            :disabled="loading || running"
+          />
+          <span class="field-hint">目標持有檔數；預算按此等分</span>
+        </el-form-item>
+        <el-form-item label="略過前 N 名">
+          <el-input-number
+            v-model="skipTop"
+            :min="0"
+            :disabled="loading || running"
+          />
+          <span class="field-hint">{{ pickRangeHint }}</span>
         </el-form-item>
         <el-form-item label="換倉間隔 Y">
           <el-input-number
@@ -267,6 +281,9 @@
     >
       <template v-if="selectedEvent?.type === 'round_buy'">
         <el-table :data="buyRowsSorted" stripe size="small" border max-height="480">
+          <el-table-column label="排名" width="64" align="center">
+            <template #default="{ row }">{{ row.momentumRank ?? '—' }}</template>
+          </el-table-column>
           <el-table-column label="商品" min-width="120">
             <template #default="{ row }">{{ row.stockName }} {{ row.stockId }}</template>
           </el-table-column>
@@ -441,7 +458,8 @@ const supabaseReady = isSupabaseConfigured()
 
 const startDate = ref('2020-01-02')
 const endDate = ref('2025-12-31')
-const topCount = ref(DEFAULT_MOMENTUM_PARAMS.topCount)
+const holdCount = ref(DEFAULT_MOMENTUM_PARAMS.holdCount)
+const skipTop = ref(DEFAULT_MOMENTUM_PARAMS.skipTop)
 const rebalanceInterval = ref(DEFAULT_MOMENTUM_PARAMS.rebalanceInterval)
 const roundCycles = ref(DEFAULT_MOMENTUM_PARAMS.roundCycles)
 const holdingMode = ref(DEFAULT_MOMENTUM_PARAMS.holdingMode)
@@ -486,6 +504,13 @@ const maxCullCount = computed(() => {
   let count = 0
   for (let offset = y; offset < max; offset += y) count += 1
   return count
+})
+
+const pickRangeHint = computed(() => {
+  const n = Math.max(0, Number(skipTop.value) || 0)
+  const h = Math.max(1, Number(holdCount.value) || 1)
+  if (n === 0) return `從第 1 名起往下選，目標 ${h} 檔（漲停等會繼續往後找）`
+  return `略過前 ${n} 名後從第 ${n + 1} 名起往下選，目標 ${h} 檔`
 })
 
 const holdingSpanDays = computed(() =>
@@ -691,15 +716,15 @@ async function runBacktest() {
     }
     poolMeta.stockCount = universe.size
 
-    if (universe.size < topCount.value) {
+    if (universe.size < holdCount.value + skipTop.value) {
       const midDate = calendar[Math.floor(calendar.length / 2)]
       const extra = buildEligibleUniverse(await fetchStocksOnDate(supabase, midDate))
       universe = mergeUniverses([universe, extra])
       poolMeta.stockCount = universe.size
     }
 
-    if (universe.size < topCount.value) {
-      throw new Error(`選股池僅 ${universe.size} 檔，少於持股檔數 ${topCount.value}`)
+    if (universe.size < holdCount.value) {
+      throw new Error(`選股池僅 ${universe.size} 檔，少於持股檔數 ${holdCount.value}`)
     }
 
     progressPhase.value = '載入股價'
@@ -735,20 +760,21 @@ async function runBacktest() {
       scanFromIdx,
       lookback,
       minVolumeLots.value,
-      topCount.value,
-      buyHighSellLow.value
+      1,
+      buyHighSellLow.value,
+      skipTop.value
     )
 
     if (validStartIdx < 0) {
       throw new Error(
-        `在 ${normalizeTradeDateKey(startDate.value)} 之後找不到 ${topCount.value} 檔可算 Y 日漲幅的標的。請將起點再往后移，或降低持股檔數 / 最低成交量。`
+        `在 ${normalizeTradeDateKey(startDate.value)} 之後，略過前 ${skipTop.value} 名後找不到可建倉標的。請將起點再往后移，或降低略過名次／最低成交量。`
       )
     }
 
     const effectiveStartDate = calendar[validStartIdx]
     if (validStartIdx !== (requestedStartIdx >= 0 ? requestedStartIdx : minStartIdx)) {
       ElMessage.warning(
-        `起點 ${startDate.value} 無法建倉，已自動順延至 ${effectiveStartDate}（需 ${topCount.value} 檔通過篩選）`
+        `起點 ${startDate.value} 無法建倉，已自動順延至 ${effectiveStartDate}（略過前 ${skipTop.value} 名後需至少 1 檔可交易）`
       )
     } else if (validStartIdx > scanFromIdx) {
       ElMessage.warning(
@@ -760,7 +786,8 @@ async function runBacktest() {
       startDate: startDate.value,
       endDate: endDate.value,
       forcedStartIdx: validStartIdx,
-      topCount: topCount.value,
+      holdCount: holdCount.value,
+      skipTop: skipTop.value,
       rebalanceInterval: rebalanceInterval.value,
       roundCycles: roundCycles.value,
       holdingMode: holdingMode.value,
