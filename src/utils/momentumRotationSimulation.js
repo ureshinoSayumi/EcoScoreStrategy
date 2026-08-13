@@ -22,10 +22,21 @@ export const DEFAULT_MOMENTUM_PARAMS = {
   initialCapital: 10000,
   feeRate: 0.003,
   minVolumeLots: 50,
+  /**
+   * 汰弱賣出量能：prevDay=看 D-1；none=不看量
+   * （建倉固定看 D-1；結算仍看當天量）
+   */
+  cullSellVolumeMode: 'prevDay',
+  /** 汰弱加碼量能：prevDay=看 D-1；none=不看量 */
+  cullAddonVolumeMode: 'prevDay',
   skipLimitUpBuy: false,
   /** 最倒楣成交：買用最高價、賣用最低價 */
   buyHighSellLow: false,
   lookbackDays: null, // null = 同 rebalanceInterval
+}
+
+function normalizeVolumeMode(v) {
+  return v === 'none' ? 'none' : 'prevDay'
 }
 
 function hashSeed(str) {
@@ -99,6 +110,12 @@ export function normalizeMomentumParams(input = {}) {
       0,
       Number(input.minVolumeLots) ?? DEFAULT_MOMENTUM_PARAMS.minVolumeLots
     ),
+    cullSellVolumeMode: normalizeVolumeMode(
+      input.cullSellVolumeMode ?? DEFAULT_MOMENTUM_PARAMS.cullSellVolumeMode
+    ),
+    cullAddonVolumeMode: normalizeVolumeMode(
+      input.cullAddonVolumeMode ?? DEFAULT_MOMENTUM_PARAMS.cullAddonVolumeMode
+    ),
     skipLimitUpBuy: Boolean(input.skipLimitUpBuy),
     buyHighSellLow: Boolean(input.buyHighSellLow),
     lookbackDays: input.lookbackDays != null
@@ -124,9 +141,26 @@ function minVolumeShares(minVolumeLots) {
   return minVolumeLots * 1000
 }
 
-/** 換倉日是否可交易（有成交價且成交量達標） */
-export function isTradableOnDay(series, date, minVolumeLots, buyHighSellLow = false) {
-  const bar = getBar(series, date)
+/** 指定日成交量是否達門檻（無 K 線視為不足） */
+export function hasEnoughVolumeOnDate(series, volumeDate, minVolumeLots) {
+  if (!volumeDate) return false
+  const volBar = getBar(series, volumeDate)
+  if (!volBar) return false
+  return volBar.volume >= minVolumeShares(minVolumeLots)
+}
+
+/**
+ * 換倉日是否可交易
+ * @param {string|null} [volumeDate] 量能參考日；null=不看量；省略則用 tradeDate（同日）
+ */
+export function isTradableOnDay(
+  series,
+  tradeDate,
+  minVolumeLots,
+  buyHighSellLow = false,
+  volumeDate = undefined
+) {
+  const bar = getBar(series, tradeDate)
   if (!bar) return false
   if (buyHighSellLow) {
     if (bar.high == null || !Number.isFinite(bar.high) || bar.high <= 0) return false
@@ -134,7 +168,12 @@ export function isTradableOnDay(series, date, minVolumeLots, buyHighSellLow = fa
   } else if (bar.open == null || !Number.isFinite(bar.open) || bar.open <= 0) {
     return false
   }
-  if (bar.volume < minVolumeShares(minVolumeLots)) return false
+  if (volumeDate === null) {
+    // 明確不看量
+  } else {
+    const volDate = volumeDate === undefined ? tradeDate : volumeDate
+    if (!hasEnoughVolumeOnDate(series, volDate, minVolumeLots)) return false
+  }
   return true
 }
 
@@ -188,6 +227,10 @@ export function isLimitUpOnBuyDay(
   )
 }
 
+/**
+ * @param {'prevDay'|'none'|'sameDay'} [volumeMode]
+ * prevDay=看 D-1 量；none=不看量；sameDay=看當天量
+ */
 function shouldSkipBuyOnDay(
   series,
   calendar,
@@ -195,9 +238,18 @@ function shouldSkipBuyOnDay(
   tradeDate,
   minVolumeLots,
   skipLimitUpBuy,
-  buyHighSellLow = false
+  buyHighSellLow = false,
+  volumeMode = 'prevDay'
 ) {
-  if (!isTradableOnDay(series, tradeDate, minVolumeLots, buyHighSellLow)) return true
+  let volumeDate
+  if (volumeMode === 'none') volumeDate = null
+  else if (volumeMode === 'sameDay') volumeDate = tradeDate
+  else volumeDate = actionIdx > 0 ? calendar[actionIdx - 1] : null
+
+  if (volumeMode === 'prevDay' && volumeDate == null) return true
+  if (!isTradableOnDay(series, tradeDate, minVolumeLots, buyHighSellLow, volumeDate)) {
+    return true
+  }
   if (
     skipLimitUpBuy &&
     isLimitUpOnBuyDay(series, calendar, actionIdx, tradeDate)
@@ -249,6 +301,7 @@ export function rankByMomentum(
   if (!endDate || !startDate) return []
 
   const actionDate = calendar[actionIdx]
+  const volumeDate = actionIdx > 0 ? calendar[actionIdx - 1] : null
   const scored = []
 
   for (const stockId of stockIds) {
@@ -260,8 +313,9 @@ export function rankByMomentum(
 
     if (
       requireTradable &&
-      actionDate &&
-      !isTradableOnDay(series, actionDate, minVolumeLots, buyHighSellLow)
+      (!actionDate ||
+        !volumeDate ||
+        !isTradableOnDay(series, actionDate, minVolumeLots, buyHighSellLow, volumeDate))
     ) {
       continue
     }
@@ -311,19 +365,23 @@ export function diagnoseRankFailure(
   let hasReturn = 0
   let hasTradable = 0
   const actionDate = calendar[actionIdx]
+  const volumeDate = actionIdx > 0 ? calendar[actionIdx - 1] : null
 
   for (const stockId of stockIds) {
     const series = stockData.get(stockId)
     if (!series) continue
     if (calcCloseReturn(series, startDate, endDate) != null) hasReturn += 1
-    if (actionDate && isTradableOnDay(series, actionDate, minVolumeLots, buyHighSellLow)) {
+    if (
+      actionDate &&
+      isTradableOnDay(series, actionDate, minVolumeLots, buyHighSellLow, volumeDate)
+    ) {
       hasTradable += 1
     }
   }
 
   return (
     `回看 ${startDate}→${endDate}：可算漲幅 ${hasReturn} 檔；` +
-    `建倉日 ${actionDate} 可交易 ${hasTradable} 檔（池內 ${stockIds.length} 檔）`
+    `建倉日 ${actionDate}（量看 D-1）可交易 ${hasTradable} 檔（池內 ${stockIds.length} 檔）`
   )
 }
 
@@ -353,12 +411,17 @@ export function findFirstValidActionIdx(
 
   for (let idx = start; idx < calendar.length; idx++) {
     const actionDate = calendar[idx]
+    const volumeDate = idx > 0 ? calendar[idx - 1] : null
+    if (!volumeDate) continue
     let ok = 0
 
     if (mode === 'random') {
       for (const stockId of stockIds) {
         const series = stockData.get(stockId)
-        if (series && isTradableOnDay(series, actionDate, minVolumeLots, buyHighSellLow)) {
+        if (
+          series &&
+          isTradableOnDay(series, actionDate, minVolumeLots, buyHighSellLow, volumeDate)
+        ) {
           ok += 1
           if (ok >= need) break
         }
@@ -376,7 +439,10 @@ export function findFirstValidActionIdx(
       const afterSkip = ranked.slice(skip)
       for (const pick of afterSkip) {
         const series = stockData.get(pick.stockId)
-        if (series && isTradableOnDay(series, actionDate, minVolumeLots, buyHighSellLow)) {
+        if (
+          series &&
+          isTradableOnDay(series, actionDate, minVolumeLots, buyHighSellLow, volumeDate)
+        ) {
           ok += 1
           if (ok >= need) break
         }
@@ -494,6 +560,8 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     initialCapital,
     feeRate,
     minVolumeLots,
+    cullSellVolumeMode,
+    cullAddonVolumeMode,
     skipLimitUpBuy,
     buyHighSellLow,
     lookbackDays,
@@ -628,7 +696,8 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
           actionDate,
           minVolumeLots,
           skipLimitUpBuy,
-          buyHighSellLow
+          buyHighSellLow,
+          'prevDay'
         )
       ) {
         continue
@@ -671,12 +740,43 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       selectionMode,
       budget,
       fillMode: buyHighSellLow ? 'buy_high_sell_low' : 'open',
+      volumeMode: 'prevDay',
     }, opened)
 
     return opened
   }
 
-  function executeSell(pos, actionDate) {
+  /** 汰弱賣出：量能依 cullSellVolumeMode；缺行情則 0 元出清 */
+  function executeCullSell(pos, actionDate, actionIdx) {
+    const series = stockData.get(pos.stockId)
+    if (cullSellVolumeMode === 'prevDay') {
+      const prevDate = actionIdx > 0 ? calendar[actionIdx - 1] : null
+      if (!hasEnoughVolumeOnDate(series, prevDate, minVolumeLots)) {
+        return { sold: false, proceeds: 0, reason: 'D-1量不足或不存在' }
+      }
+    }
+
+    const bar = getBar(series, actionDate)
+    const sellPrice = getSellFillPrice(bar, buyHighSellLow)
+    if (sellPrice == null || sellPrice <= 0) {
+      return {
+        sold: true,
+        proceeds: 0,
+        return: -1,
+        sellPrice: 0,
+        note: '缺行情以 0 元出清（資料缺失或下市）',
+        zeroForce: true,
+      }
+    }
+
+    const { proceeds } = sellAtOpen(pos.shares, sellPrice, feeRate)
+    cash += proceeds
+    const ret = pos.costBasis > 0 ? proceeds / pos.costBasis - 1 : 0
+    return { sold: true, proceeds, return: ret, sellPrice }
+  }
+
+  /** 結算賣出：仍看當天量；失敗則收盤備援（不用 0 元） */
+  function executeSettleSell(pos, actionDate) {
     const series = stockData.get(pos.stockId)
     const bar = getBar(series, actionDate)
     if (!bar || !isTradableOnDay(series, actionDate, minVolumeLots, buyHighSellLow)) {
@@ -720,15 +820,17 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     const soldRecords = []
     const addonRecords = []
     let sellProceeds = 0
+    const zeroForceIds = []
 
     for (const pos of positions) {
       if (!toSellIds.has(pos.stockId)) {
         survivors.push(pos)
         continue
       }
-      const result = executeSell(pos, actionDate)
+      const result = executeCullSell(pos, actionDate, actionIdx)
       if (result.sold) {
-        sellProceeds += result.proceeds
+        if (result.zeroForce) zeroForceIds.push(pos.stockId)
+        else sellProceeds += result.proceeds
         soldRecords.push(buildSoldDetail(pos, actionDate, result, momentumMap.get(pos.stockId)))
       } else {
         survivors.push(pos)
@@ -749,7 +851,8 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
             actionDate,
             minVolumeLots,
             skipLimitUpBuy,
-            buyHighSellLow
+            buyHighSellLow,
+            cullAddonVolumeMode
           )
         ) {
           cash += addonEach
@@ -799,6 +902,10 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       survivorCount: survivors.length,
       addonPerStock: survivors.length ? sellProceeds / survivors.length : 0,
       fillMode: buyHighSellLow ? 'buy_high_sell_low' : 'open',
+      cullSellVolumeMode,
+      cullAddonVolumeMode,
+      zeroForceCount: zeroForceIds.length,
+      zeroForceIds,
     }, survivors)
 
     positions = survivors
@@ -808,7 +915,7 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
   function settleAll(actionDate, roundStartCash, extra = {}) {
     const soldRecords = []
     for (const pos of positions) {
-      const result = executeSell(pos, actionDate)
+      const result = executeSettleSell(pos, actionDate)
       if (result.sold) {
         soldRecords.push(buildSoldDetail(pos, actionDate, result))
       } else {
@@ -826,7 +933,7 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
             sellPrice: px,
             note: buyHighSellLow
               ? '結算日無法用最低價成交，改備援估價（仍扣手續費）'
-              : '結算日無開盤，改收盤估計（仍扣手續費）',
+              : '結算日無開盤／量不足，改收盤估計（仍扣手續費）',
           })
         )
       }

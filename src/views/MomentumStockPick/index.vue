@@ -120,7 +120,21 @@
             :step="10"
             :disabled="loading || running"
           />
-          <span class="field-hint">張（換倉日低於此量跳過）</span>
+          <span class="field-hint">張；建倉固定看 D-1，結算仍看當天；汰弱賣／加碼見下方</span>
+        </el-form-item>
+        <el-form-item label="汰弱賣出量">
+          <el-radio-group v-model="cullSellVolumeMode" :disabled="loading || running">
+            <el-radio value="prevDay">看 D-1</el-radio>
+            <el-radio value="none">不看量</el-radio>
+          </el-radio-group>
+          <span class="field-hint">量不足則不賣、續抱；缺行情則 0 元出清</span>
+        </el-form-item>
+        <el-form-item label="汰弱加碼量">
+          <el-radio-group v-model="cullAddonVolumeMode" :disabled="loading || running">
+            <el-radio value="prevDay">看 D-1</el-radio>
+            <el-radio value="none">不看量</el-radio>
+          </el-radio-group>
+          <span class="field-hint">與賣出量能獨立；量不足則該檔不加碼、現金留下</span>
         </el-form-item>
         <el-form-item label="跳過漲停">
           <el-switch
@@ -343,6 +357,9 @@
               <span :class="returnClass(row.returnPct)">{{ formatPct(row.returnPct) }}</span>
             </template>
           </el-table-column>
+          <el-table-column label="備註" min-width="140">
+            <template #default="{ row }">{{ row.note || '—' }}</template>
+          </el-table-column>
         </el-table>
 
         <h4 v-if="cullKeptSorted.length" class="detail-section-title">
@@ -475,6 +492,8 @@ const maxHoldingDays = ref(DEFAULT_MOMENTUM_PARAMS.maxHoldingDays)
 const initialCapital = ref(DEFAULT_MOMENTUM_PARAMS.initialCapital)
 const feePercent = ref(DEFAULT_MOMENTUM_PARAMS.feeRate * 100)
 const minVolumeLots = ref(DEFAULT_MOMENTUM_PARAMS.minVolumeLots)
+const cullSellVolumeMode = ref(DEFAULT_MOMENTUM_PARAMS.cullSellVolumeMode)
+const cullAddonVolumeMode = ref(DEFAULT_MOMENTUM_PARAMS.cullAddonVolumeMode)
 const skipLimitUpBuy = ref(DEFAULT_MOMENTUM_PARAMS.skipLimitUpBuy)
 const buyHighSellLow = ref(DEFAULT_MOMENTUM_PARAMS.buyHighSellLow)
 const outputChart = ref(true)
@@ -595,7 +614,14 @@ function formatEventDetail(ev) {
   if (ev.type === 'cull') {
     const names = (ev.sold ?? []).map((s) => s.stockId).join('、')
     const addonN = (ev.addons ?? []).length
-    return `賣 ${ev.sellCount ?? 0} 檔${names ? `（${names}）` : ''}，加碼 ${addonN} 檔，存活 ${ev.survivorCount ?? 0} 檔`
+    const zeroN = ev.zeroForceCount ?? 0
+    const zeroTip =
+      zeroN > 0
+        ? `；⚠ ${zeroN} 檔缺行情以 0 元出清${
+            (ev.zeroForceIds ?? []).length ? `（${ev.zeroForceIds.join('、')}）` : ''
+          }`
+        : ''
+    return `賣 ${ev.sellCount ?? 0} 檔${names ? `（${names}）` : ''}，加碼 ${addonN} 檔，存活 ${ev.survivorCount ?? 0} 檔${zeroTip}`
   }
   if (ev.type === 'settle') {
     return `全數賣出 ${(ev.sold ?? []).length} 檔，期末現金 ${formatMoney(ev.roundCash)}`
@@ -812,6 +838,8 @@ async function runBacktest() {
       initialCapital: initialCapital.value,
       feeRate: feePercent.value / 100,
       minVolumeLots: minVolumeLots.value,
+      cullSellVolumeMode: cullSellVolumeMode.value,
+      cullAddonVolumeMode: cullAddonVolumeMode.value,
       skipLimitUpBuy: skipLimitUpBuy.value,
       buyHighSellLow: buyHighSellLow.value,
     })
