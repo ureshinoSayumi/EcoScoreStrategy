@@ -13,7 +13,7 @@
         :closable="false"
         class="mb-12"
         title="策略規則"
-        description="每輪：選過去 Y 日漲幅前 X 檔等權買入（開盤價）→ 每 Y 交易日汰弱留強、加碼存活標的 → 持滿一輪週期或最大持股天數後結算 → 下一交易日重新選股。僅 4 碼普通股，排除 ETF／DR。"
+        description="每輪：選過去 Y 日漲幅前 X 檔等權買入 → 每 Y 交易日汰弱留強、加碼存活標的 → 持滿一輪週期或最大持股天數後結算 → 下一交易日重新選股。預設開盤價成交；可開「買高賣低」測最倒楣（買最高／賣最低）。僅 4 碼普通股，排除 ETF／DR。"
       />
 
       <el-form label-width="130px">
@@ -110,6 +110,18 @@
             :disabled="loading || running"
           />
           <span class="field-hint">建倉／加碼時，開盤或最高價較前一日收盤漲 ≥9.99% 則跳過</span>
+        </el-form-item>
+        <el-form-item label="買高賣低">
+          <el-switch
+            v-model="buyHighSellLow"
+            inline-prompt
+            active-text="是"
+            inactive-text="否"
+            :disabled="loading || running"
+          />
+          <span class="field-hint">
+            最倒楣成交：建倉／加碼用當日最高價，減碼／結算用當日最低價（預設仍為開盤價）
+          </span>
         </el-form-item>
         <el-form-item label="輸出圖表">
           <el-switch v-model="outputChart" inline-prompt active-text="是" inactive-text="否" />
@@ -438,6 +450,7 @@ const initialCapital = ref(DEFAULT_MOMENTUM_PARAMS.initialCapital)
 const feePercent = ref(DEFAULT_MOMENTUM_PARAMS.feeRate * 100)
 const minVolumeLots = ref(DEFAULT_MOMENTUM_PARAMS.minVolumeLots)
 const skipLimitUpBuy = ref(DEFAULT_MOMENTUM_PARAMS.skipLimitUpBuy)
+const buyHighSellLow = ref(DEFAULT_MOMENTUM_PARAMS.buyHighSellLow)
 const outputChart = ref(true)
 
 const loading = ref(false)
@@ -722,7 +735,8 @@ async function runBacktest() {
       scanFromIdx,
       lookback,
       minVolumeLots.value,
-      topCount.value
+      topCount.value,
+      buyHighSellLow.value
     )
 
     if (validStartIdx < 0) {
@@ -755,6 +769,7 @@ async function runBacktest() {
       feeRate: feePercent.value / 100,
       minVolumeLots: minVolumeLots.value,
       skipLimitUpBuy: skipLimitUpBuy.value,
+      buyHighSellLow: buyHighSellLow.value,
     })
 
     result.value = backtest

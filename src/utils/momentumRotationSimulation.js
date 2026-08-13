@@ -18,6 +18,8 @@ export const DEFAULT_MOMENTUM_PARAMS = {
   feeRate: 0.003,
   minVolumeLots: 50,
   skipLimitUpBuy: false,
+  /** 最倒楣成交：買用最高價、賣用最低價 */
+  buyHighSellLow: false,
   lookbackDays: null, // null = 同 rebalanceInterval
 }
 
@@ -48,6 +50,7 @@ export function normalizeMomentumParams(input = {}) {
       Number(input.minVolumeLots) ?? DEFAULT_MOMENTUM_PARAMS.minVolumeLots
     ),
     skipLimitUpBuy: Boolean(input.skipLimitUpBuy),
+    buyHighSellLow: Boolean(input.buyHighSellLow),
     lookbackDays: input.lookbackDays != null
       ? Math.max(1, Math.floor(Number(input.lookbackDays)))
       : rebalanceInterval,
@@ -71,13 +74,36 @@ function minVolumeShares(minVolumeLots) {
   return minVolumeLots * 1000
 }
 
-/** 換倉日是否可交易（有開盤價且成交量達標） */
-export function isTradableOnDay(series, date, minVolumeLots) {
+/** 換倉日是否可交易（有成交價且成交量達標） */
+export function isTradableOnDay(series, date, minVolumeLots, buyHighSellLow = false) {
   const bar = getBar(series, date)
   if (!bar) return false
-  if (bar.open == null || !Number.isFinite(bar.open) || bar.open <= 0) return false
+  if (buyHighSellLow) {
+    if (bar.high == null || !Number.isFinite(bar.high) || bar.high <= 0) return false
+    if (bar.low == null || !Number.isFinite(bar.low) || bar.low <= 0) return false
+  } else if (bar.open == null || !Number.isFinite(bar.open) || bar.open <= 0) {
+    return false
+  }
   if (bar.volume < minVolumeShares(minVolumeLots)) return false
   return true
+}
+
+/** 建倉／加碼成交價：預設開盤；最倒楣模式用最高價 */
+export function getBuyFillPrice(bar, buyHighSellLow = false) {
+  if (!bar) return null
+  if (buyHighSellLow) {
+    return bar.high != null && Number.isFinite(bar.high) && bar.high > 0 ? bar.high : null
+  }
+  return bar.open != null && Number.isFinite(bar.open) && bar.open > 0 ? bar.open : null
+}
+
+/** 減碼／結算成交價：預設開盤；最倒楣模式用最低價 */
+export function getSellFillPrice(bar, buyHighSellLow = false) {
+  if (!bar) return null
+  if (buyHighSellLow) {
+    return bar.low != null && Number.isFinite(bar.low) && bar.low > 0 ? bar.low : null
+  }
+  return bar.open != null && Number.isFinite(bar.open) && bar.open > 0 ? bar.open : null
 }
 
 export function calcGainFromPrevClose(price, prevClose) {
@@ -112,8 +138,16 @@ export function isLimitUpOnBuyDay(
   )
 }
 
-function shouldSkipBuyOnDay(series, calendar, actionIdx, tradeDate, minVolumeLots, skipLimitUpBuy) {
-  if (!isTradableOnDay(series, tradeDate, minVolumeLots)) return true
+function shouldSkipBuyOnDay(
+  series,
+  calendar,
+  actionIdx,
+  tradeDate,
+  minVolumeLots,
+  skipLimitUpBuy,
+  buyHighSellLow = false
+) {
+  if (!isTradableOnDay(series, tradeDate, minVolumeLots, buyHighSellLow)) return true
   if (
     skipLimitUpBuy &&
     isLimitUpOnBuyDay(series, calendar, actionIdx, tradeDate)
@@ -156,7 +190,7 @@ export function rankByMomentum(
   actionIdx,
   lookbackDays,
   minVolumeLots,
-  { requireTradable = false } = {}
+  { requireTradable = false, buyHighSellLow = false } = {}
 ) {
   if (actionIdx <= 0) return []
 
@@ -174,7 +208,11 @@ export function rankByMomentum(
     const ret = calcCloseReturn(series, startDate, endDate)
     if (ret == null) continue
 
-    if (requireTradable && actionDate && !isTradableOnDay(series, actionDate, minVolumeLots)) {
+    if (
+      requireTradable &&
+      actionDate &&
+      !isTradableOnDay(series, actionDate, minVolumeLots, buyHighSellLow)
+    ) {
       continue
     }
 
@@ -207,7 +245,8 @@ export function diagnoseRankFailure(
   calendar,
   actionIdx,
   lookbackDays,
-  minVolumeLots
+  minVolumeLots,
+  buyHighSellLow = false
 ) {
   if (actionIdx <= 0) {
     return '交易日索引不足（資料起始日太晚，無法回看 Y 日漲幅）'
@@ -227,7 +266,9 @@ export function diagnoseRankFailure(
     const series = stockData.get(stockId)
     if (!series) continue
     if (calcCloseReturn(series, startDate, endDate) != null) hasReturn += 1
-    if (actionDate && isTradableOnDay(series, actionDate, minVolumeLots)) hasTradable += 1
+    if (actionDate && isTradableOnDay(series, actionDate, minVolumeLots, buyHighSellLow)) {
+      hasTradable += 1
+    }
   }
 
   return (
@@ -247,7 +288,8 @@ export function findFirstValidActionIdx(
   fromIdx,
   lookbackDays,
   minVolumeLots,
-  minPicks = 1
+  minPicks = 1,
+  buyHighSellLow = false
 ) {
   const minIdx = getMinActionIdx(lookbackDays)
   const start = Math.max(fromIdx, minIdx)
@@ -260,7 +302,7 @@ export function findFirstValidActionIdx(
       idx,
       lookbackDays,
       minVolumeLots,
-      { requireTradable: true }
+      { requireTradable: true, buyHighSellLow }
     )
     if (ranked.length >= minPicks) return idx
   }
@@ -372,6 +414,7 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     feeRate,
     minVolumeLots,
     skipLimitUpBuy,
+    buyHighSellLow,
     lookbackDays,
   } = params
 
@@ -427,7 +470,7 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       actionIdx,
       lookbackDays,
       minVolumeLots,
-      { requireTradable: true }
+      { requireTradable: true, buyHighSellLow }
     )
     const picks = ranked.slice(0, topCount)
     if (!picks.length) {
@@ -437,7 +480,8 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
         calendar,
         actionIdx,
         lookbackDays,
-        minVolumeLots
+        minVolumeLots,
+        buyHighSellLow
       )
       recordEvent('buy_skip', actionDate, { reason })
       return []
@@ -454,13 +498,24 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
 
       const series = stockData.get(pick.stockId)
       if (!series) continue
-      if (shouldSkipBuyOnDay(series, calendar, actionIdx, actionDate, minVolumeLots, skipLimitUpBuy)) {
+      if (
+        shouldSkipBuyOnDay(
+          series,
+          calendar,
+          actionIdx,
+          actionDate,
+          minVolumeLots,
+          skipLimitUpBuy,
+          buyHighSellLow
+        )
+      ) {
         continue
       }
 
       const bar = getBar(series, actionDate)
-      if (!bar) continue
-      const bought = buyAtOpen(perStock, bar.open, feeRate)
+      const buyPrice = getBuyFillPrice(bar, buyHighSellLow)
+      if (buyPrice == null) continue
+      const bought = buyAtOpen(perStock, buyPrice, feeRate)
       if (!bought) continue
       cash -= perStock
       const pos = {
@@ -469,7 +524,7 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
         shares: bought.shares,
         costBasis: bought.costBasis,
         initialBuyDate: actionDate,
-        initialBuyPrice: bar.open,
+        initialBuyPrice: buyPrice,
         initialBuyAmount: perStock,
         addons: [],
       }
@@ -478,7 +533,7 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
         stockId: pick.stockId,
         stockName: pick.stockName,
         buyDate: actionDate,
-        buyPrice: bar.open,
+        buyPrice,
         buyAmount: perStock,
         shares: bought.shares,
         momentumReturnPct: toMomentumPct(pick.return),
@@ -489,20 +544,26 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       buys: buyRecords,
       pickCount: buyRecords.length,
       budget,
+      fillMode: buyHighSellLow ? 'buy_high_sell_low' : 'open',
     }, opened)
 
     return opened
   }
 
   function executeSell(pos, actionDate) {
-    const bar = getBar(stockData.get(pos.stockId), actionDate)
-    if (!bar || !isTradableOnDay(stockData.get(pos.stockId), actionDate, minVolumeLots)) {
+    const series = stockData.get(pos.stockId)
+    const bar = getBar(series, actionDate)
+    if (!bar || !isTradableOnDay(series, actionDate, minVolumeLots, buyHighSellLow)) {
       return { sold: false, proceeds: 0, reason: '無成交或量不足' }
     }
-    const { proceeds } = sellAtOpen(pos.shares, bar.open, feeRate)
+    const sellPrice = getSellFillPrice(bar, buyHighSellLow)
+    if (sellPrice == null) {
+      return { sold: false, proceeds: 0, reason: '無成交價' }
+    }
+    const { proceeds } = sellAtOpen(pos.shares, sellPrice, feeRate)
     cash += proceeds
     const ret = pos.costBasis > 0 ? proceeds / pos.costBasis - 1 : 0
-    return { sold: true, proceeds, return: ret, sellPrice: bar.open }
+    return { sold: true, proceeds, return: ret, sellPrice }
   }
 
   function cullWeak(actionDate, actionIdx) {
@@ -520,7 +581,8 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       calendar,
       actionIdx,
       lookbackDays,
-      minVolumeLots
+      minVolumeLots,
+      { buyHighSellLow }
     )
     const momentumMap = new Map(ranked.map((r) => [r.stockId, r.return]))
     const sellCount = Math.ceil(positions.length / 2)
@@ -554,19 +616,32 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
         const bar = getBar(series, actionDate)
         if (
           !bar ||
-          shouldSkipBuyOnDay(series, calendar, actionIdx, actionDate, minVolumeLots, skipLimitUpBuy)
+          shouldSkipBuyOnDay(
+            series,
+            calendar,
+            actionIdx,
+            actionDate,
+            minVolumeLots,
+            skipLimitUpBuy,
+            buyHighSellLow
+          )
         ) {
           cash += addonEach
           continue
         }
-        const bought = buyAtOpen(addonEach, bar.open, feeRate)
+        const buyPrice = getBuyFillPrice(bar, buyHighSellLow)
+        if (buyPrice == null) {
+          cash += addonEach
+          continue
+        }
+        const bought = buyAtOpen(addonEach, buyPrice, feeRate)
         if (!bought) {
           cash += addonEach
           continue
         }
         const addonEntry = {
           date: actionDate,
-          price: bar.open,
+          price: buyPrice,
           amount: bought.costBasis,
           shares: bought.shares,
         }
@@ -597,6 +672,7 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       addons: addonRecords,
       survivorCount: survivors.length,
       addonPerStock: survivors.length ? sellProceeds / survivors.length : 0,
+      fillMode: buyHighSellLow ? 'buy_high_sell_low' : 'open',
     }, survivors)
 
     positions = survivors
@@ -611,7 +687,9 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
         soldRecords.push(buildSoldDetail(pos, actionDate, result))
       } else {
         const bar = getBar(stockData.get(pos.stockId), actionDate)
-        const px = bar?.close ?? 0
+        const px = buyHighSellLow
+          ? (getSellFillPrice(bar, true) ?? bar?.close ?? 0)
+          : (bar?.close ?? 0)
         const { proceeds } = sellAtOpen(pos.shares, px, feeRate)
         cash += proceeds
         soldRecords.push(
@@ -620,7 +698,9 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
             proceeds,
             return: pos.costBasis > 0 ? proceeds / pos.costBasis - 1 : 0,
             sellPrice: px,
-            note: '結算日無開盤，改收盤估計（仍扣手續費）',
+            note: buyHighSellLow
+              ? '結算日無法用最低價成交，改備援估價（仍扣手續費）'
+              : '結算日無開盤，改收盤估計（仍扣手續費）',
           })
         )
       }
