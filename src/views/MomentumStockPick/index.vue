@@ -13,7 +13,7 @@
         :closable="false"
         class="mb-12"
         title="策略規則"
-        description="每輪：略過漲幅榜前 N 名後，往下選滿持股檔數（等權；買不滿也開輪）→ 每 Y 交易日汰弱留強、加碼存活標的 → 持滿一輪後結算再重選。預設開盤價；可開「買高賣低」。僅 4 碼普通股，排除 ETF／DR。"
+        description="每輪：建倉可選「動能排名」或「隨機選股」→ 每 Y 交易日汰弱留強（仍依持股內動能）→ 持滿一輪後結算再重選。預設開盤價；可開「買高賣低」。僅 4 碼普通股，排除 ETF／DR。"
       />
 
       <el-form label-width="130px">
@@ -45,7 +45,14 @@
           />
           <span class="field-hint">目標持有檔數；預算按此等分</span>
         </el-form-item>
-        <el-form-item label="略過前 N 名">
+        <el-form-item label="建倉選股">
+          <el-radio-group v-model="selectionMode" :disabled="loading || running">
+            <el-radio value="momentum">動能排名</el-radio>
+            <el-radio value="random">隨機選股</el-radio>
+          </el-radio-group>
+          <span class="field-hint">與「略過前 N 名」二擇一；隨機只影響建倉，汰弱仍看持股動能</span>
+        </el-form-item>
+        <el-form-item v-if="selectionMode === 'momentum'" label="略過前 N 名">
           <el-input-number
             v-model="skipTop"
             :min="0"
@@ -459,6 +466,7 @@ const supabaseReady = isSupabaseConfigured()
 const startDate = ref('2020-01-02')
 const endDate = ref('2025-12-31')
 const holdCount = ref(DEFAULT_MOMENTUM_PARAMS.holdCount)
+const selectionMode = ref(DEFAULT_MOMENTUM_PARAMS.selectionMode)
 const skipTop = ref(DEFAULT_MOMENTUM_PARAMS.skipTop)
 const rebalanceInterval = ref(DEFAULT_MOMENTUM_PARAMS.rebalanceInterval)
 const roundCycles = ref(DEFAULT_MOMENTUM_PARAMS.roundCycles)
@@ -507,6 +515,9 @@ const maxCullCount = computed(() => {
 })
 
 const pickRangeHint = computed(() => {
+  if (selectionMode.value === 'random') {
+    return `每輪自可交易標的中隨機抽 ${holdCount.value} 檔（同一回測可重現）`
+  }
   const n = Math.max(0, Number(skipTop.value) || 0)
   const h = Math.max(1, Number(holdCount.value) || 1)
   if (n === 0) return `從第 1 名起往下選，目標 ${h} 檔（漲停等會繼續往後找）`
@@ -762,19 +773,24 @@ async function runBacktest() {
       minVolumeLots.value,
       1,
       buyHighSellLow.value,
-      skipTop.value
+      selectionMode.value === 'random' ? 0 : skipTop.value,
+      selectionMode.value
     )
 
     if (validStartIdx < 0) {
       throw new Error(
-        `在 ${normalizeTradeDateKey(startDate.value)} 之後，略過前 ${skipTop.value} 名後找不到可建倉標的。請將起點再往后移，或降低略過名次／最低成交量。`
+        selectionMode.value === 'random'
+          ? `在 ${normalizeTradeDateKey(startDate.value)} 之後找不到可交易標的。請將起點再往后移，或降低最低成交量。`
+          : `在 ${normalizeTradeDateKey(startDate.value)} 之後，略過前 ${skipTop.value} 名後找不到可建倉標的。請將起點再往后移，或降低略過名次／最低成交量。`
       )
     }
 
     const effectiveStartDate = calendar[validStartIdx]
     if (validStartIdx !== (requestedStartIdx >= 0 ? requestedStartIdx : minStartIdx)) {
       ElMessage.warning(
-        `起點 ${startDate.value} 無法建倉，已自動順延至 ${effectiveStartDate}（略過前 ${skipTop.value} 名後需至少 1 檔可交易）`
+        selectionMode.value === 'random'
+          ? `起點 ${startDate.value} 無法建倉，已自動順延至 ${effectiveStartDate}（需至少 1 檔可交易）`
+          : `起點 ${startDate.value} 無法建倉，已自動順延至 ${effectiveStartDate}（略過前 ${skipTop.value} 名後需至少 1 檔可交易）`
       )
     } else if (validStartIdx > scanFromIdx) {
       ElMessage.warning(
@@ -787,7 +803,8 @@ async function runBacktest() {
       endDate: endDate.value,
       forcedStartIdx: validStartIdx,
       holdCount: holdCount.value,
-      skipTop: skipTop.value,
+      selectionMode: selectionMode.value,
+      skipTop: selectionMode.value === 'random' ? 0 : skipTop.value,
       rebalanceInterval: rebalanceInterval.value,
       roundCycles: roundCycles.value,
       holdingMode: holdingMode.value,

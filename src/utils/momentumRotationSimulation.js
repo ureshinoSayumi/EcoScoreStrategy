@@ -11,7 +11,9 @@ export const LIMIT_UP_BUY_THRESHOLD = 0.0999
 export const DEFAULT_MOMENTUM_PARAMS = {
   /** 每輪目標持股檔數（等權切分預算用） */
   holdCount: 50,
-  /** 略過漲幅榜前 N 名後再往下選 */
+  /** 建倉選股：momentum=動能排名；random=隨機 */
+  selectionMode: 'momentum',
+  /** 略過漲幅榜前 N 名後再往下選（僅 momentum 模式） */
   skipTop: 0,
   rebalanceInterval: 30,
   roundCycles: 3,
@@ -26,6 +28,37 @@ export const DEFAULT_MOMENTUM_PARAMS = {
   lookbackDays: null, // null = 同 rebalanceInterval
 }
 
+function hashSeed(str) {
+  let h = 2166136261
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return h >>> 0
+}
+
+/** 可重現的 PRNG（同一種子同一序列） */
+function mulberry32(seed) {
+  let a = seed >>> 0
+  return () => {
+    a |= 0
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+function shuffleInPlace(arr, rand) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1))
+    const tmp = arr[i]
+    arr[i] = arr[j]
+    arr[j] = tmp
+  }
+  return arr
+}
+
 export function normalizeMomentumParams(input = {}) {
   const rebalanceInterval = Math.max(
     1,
@@ -33,15 +66,20 @@ export function normalizeMomentumParams(input = {}) {
   )
   const holdCountRaw =
     input.holdCount != null ? input.holdCount : input.topCount
+  const selectionMode = input.selectionMode === 'random' ? 'random' : 'momentum'
   return {
     holdCount: Math.max(
       1,
       Math.floor(Number(holdCountRaw) || DEFAULT_MOMENTUM_PARAMS.holdCount)
     ),
-    skipTop: Math.max(
-      0,
-      Math.floor(Number(input.skipTop) || DEFAULT_MOMENTUM_PARAMS.skipTop)
-    ),
+    selectionMode,
+    skipTop:
+      selectionMode === 'random'
+        ? 0
+        : Math.max(
+            0,
+            Math.floor(Number(input.skipTop) || DEFAULT_MOMENTUM_PARAMS.skipTop)
+          ),
     rebalanceInterval,
     roundCycles: Math.max(
       1,
@@ -291,7 +329,8 @@ export function diagnoseRankFailure(
 
 /**
  * 從 fromIdx 起往後找第一個可建倉的交易日
- * （略過前 skipTop 名後，至少還有 minPicks 檔可交易）
+ * momentum：略過前 skipTop 名後至少 minPicks 檔可交易
+ * random：池內至少 minPicks 檔可交易
  * @returns {number} 索引；-1 表示找不到
  */
 export function findFirstValidActionIdx(
@@ -303,32 +342,47 @@ export function findFirstValidActionIdx(
   minVolumeLots,
   minPicks = 1,
   buyHighSellLow = false,
-  skipTop = 0
+  skipTop = 0,
+  selectionMode = 'momentum'
 ) {
   const minIdx = getMinActionIdx(lookbackDays)
   const start = Math.max(fromIdx, minIdx)
   const skip = Math.max(0, Math.floor(Number(skipTop) || 0))
   const need = Math.max(1, Math.floor(Number(minPicks) || 1))
+  const mode = selectionMode === 'random' ? 'random' : 'momentum'
 
   for (let idx = start; idx < calendar.length; idx++) {
-    const ranked = rankByMomentum(
-      stockIds,
-      stockData,
-      calendar,
-      idx,
-      lookbackDays,
-      minVolumeLots,
-      { requireTradable: false, buyHighSellLow }
-    )
-    const afterSkip = ranked.slice(skip)
+    const actionDate = calendar[idx]
     let ok = 0
-    for (const pick of afterSkip) {
-      const series = stockData.get(pick.stockId)
-      if (series && isTradableOnDay(series, calendar[idx], minVolumeLots, buyHighSellLow)) {
-        ok += 1
-        if (ok >= need) break
+
+    if (mode === 'random') {
+      for (const stockId of stockIds) {
+        const series = stockData.get(stockId)
+        if (series && isTradableOnDay(series, actionDate, minVolumeLots, buyHighSellLow)) {
+          ok += 1
+          if (ok >= need) break
+        }
+      }
+    } else {
+      const ranked = rankByMomentum(
+        stockIds,
+        stockData,
+        calendar,
+        idx,
+        lookbackDays,
+        minVolumeLots,
+        { requireTradable: false, buyHighSellLow }
+      )
+      const afterSkip = ranked.slice(skip)
+      for (const pick of afterSkip) {
+        const series = stockData.get(pick.stockId)
+        if (series && isTradableOnDay(series, actionDate, minVolumeLots, buyHighSellLow)) {
+          ok += 1
+          if (ok >= need) break
+        }
       }
     }
+
     if (ok >= need) return idx
   }
   return -1
@@ -431,6 +485,7 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
   const params = normalizeMomentumParams(rawParams)
   const {
     holdCount,
+    selectionMode,
     skipTop,
     rebalanceInterval,
     roundCycles,
@@ -487,8 +542,30 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     history.push(snapshotState(cash, positionsSnapshot, stockData, date, initialCapital))
   }
 
-  function openInitialPositions(actionDate, actionIdx) {
-    const budget = cash
+  function buildEntryCandidates(actionDate, actionIdx) {
+    if (selectionMode === 'random') {
+      const lookbackEnd = calendar[actionIdx - 1]
+      const lookbackStart = calendar[actionIdx - 1 - lookbackDays]
+      const list = []
+      for (const stockId of universeIds) {
+        const series = stockData.get(stockId)
+        if (!series) continue
+        const ret =
+          lookbackStart && lookbackEnd
+            ? calcCloseReturn(series, lookbackStart, lookbackEnd)
+            : null
+        list.push({
+          stockId,
+          stockName: series.stockName,
+          return: ret,
+          momentumRank: null,
+        })
+      }
+      const rand = mulberry32(hashSeed(`${actionDate}|${roundNo}|random-entry`))
+      shuffleInPlace(list, rand)
+      return list
+    }
+
     const ranked = rankByMomentum(
       universeIds,
       stockData,
@@ -498,21 +575,36 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       minVolumeLots,
       { requireTradable: false, buyHighSellLow }
     )
-    const candidates = ranked.slice(skipTop)
+    return ranked.slice(skipTop).map((pick, i) => ({
+      ...pick,
+      momentumRank: skipTop + i + 1,
+    }))
+  }
+
+  function openInitialPositions(actionDate, actionIdx) {
+    const budget = cash
+    const candidates = buildEntryCandidates(actionDate, actionIdx)
     if (!candidates.length) {
-      const reason = diagnoseRankFailure(
-        universeIds,
-        stockData,
-        calendar,
-        actionIdx,
-        lookbackDays,
-        minVolumeLots,
-        buyHighSellLow
-      )
+      const reason =
+        selectionMode === 'random'
+          ? '選股池無可用標的'
+          : diagnoseRankFailure(
+              universeIds,
+              stockData,
+              calendar,
+              actionIdx,
+              lookbackDays,
+              minVolumeLots,
+              buyHighSellLow
+            )
       recordEvent('buy_skip', actionDate, {
-        reason: `略過前 ${skipTop} 名後無可選標的；${reason}`,
-        skipTop,
+        reason:
+          selectionMode === 'random'
+            ? reason
+            : `略過前 ${skipTop} 名後無可選標的；${reason}`,
+        skipTop: selectionMode === 'random' ? 0 : skipTop,
         holdCount,
+        selectionMode,
       })
       return []
     }
@@ -523,10 +615,9 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     /** @type {object[]} */
     const buyRecords = []
 
-    for (let i = 0; i < candidates.length; i++) {
+    for (const pick of candidates) {
       if (opened.length >= holdCount) break
 
-      const pick = candidates[i]
       const series = stockData.get(pick.stockId)
       if (!series) continue
       if (
@@ -549,7 +640,6 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       const bought = buyAtOpen(perStock, buyPrice, feeRate)
       if (!bought) continue
       cash -= perStock
-      const momentumRank = skipTop + i + 1
       const pos = {
         stockId: pick.stockId,
         stockName: pick.stockName,
@@ -569,7 +659,7 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
         buyAmount: perStock,
         shares: bought.shares,
         momentumReturnPct: toMomentumPct(pick.return),
-        momentumRank,
+        momentumRank: pick.momentumRank ?? null,
       })
     }
 
@@ -577,7 +667,8 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       buys: buyRecords,
       pickCount: buyRecords.length,
       holdCount,
-      skipTop,
+      skipTop: selectionMode === 'random' ? 0 : skipTop,
+      selectionMode,
       budget,
       fillMode: buyHighSellLow ? 'buy_high_sell_low' : 'open',
     }, opened)
