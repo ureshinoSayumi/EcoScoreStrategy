@@ -945,6 +945,8 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     }
 
     if (soldRecords.length && survivors.length) {
+      // 賣出所得已在 executeCullSell 進 cash；此處只把要加碼的份額再扣掉。
+      // 加碼失敗 → 不動 cash（該份原本就留在現金裡），不可再 +=，否則會重複入帳。
       const addonEach = sellProceeds / survivors.length
       for (const pos of survivors) {
         const series = stockData.get(pos.stockId)
@@ -962,17 +964,14 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
             cullAddonVolumeMode
           )
         ) {
-          cash += addonEach
           continue
         }
         const buyPrice = getBuyFillPrice(bar, buyHighSellLow)
         if (buyPrice == null) {
-          cash += addonEach
           continue
         }
         const bought = buyAtOpen(addonEach, buyPrice, feeRate)
         if (!bought) {
-          cash += addonEach
           continue
         }
         const addonEntry = {
@@ -991,9 +990,8 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
           ...addonEntry,
         })
       }
-    } else if (sellProceeds > 0 && !survivors.length) {
-      cash += sellProceeds
     }
+    // sellProceeds 已在 executeCullSell 入帳；無存活可加碼時不必再 +=
 
     const keptRecords = survivors.map((pos) => ({
       stockId: pos.stockId,
