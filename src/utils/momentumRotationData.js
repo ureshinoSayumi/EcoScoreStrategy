@@ -5,6 +5,9 @@ import { isMomentumEligibleStock } from '@/utils/momentumStockFilter'
 const CALENDAR_PROXY = '2330'
 const TABLE = 'stock_daily_prices_adj'
 
+/** 空／缺 industry 時的選項標籤 */
+export const UNCLASSIFIED_INDUSTRY = '(未分類)'
+
 /** 統一為 YYYY-MM-DD（Supabase 可能回傳含時間的字串） */
 export function normalizeTradeDateKey(raw) {
   if (raw == null || String(raw).trim() === '') return ''
@@ -13,6 +16,12 @@ export function normalizeTradeDateKey(raw) {
   const d = new Date(s)
   if (Number.isNaN(d.getTime())) return ''
   return d.toISOString().slice(0, 10)
+}
+
+/** 原始 industry 字串；空白視為未分類 */
+export function normalizeIndustryKey(raw) {
+  const s = String(raw ?? '').trim()
+  return s || UNCLASSIFIED_INDUSTRY
 }
 
 /**
@@ -52,7 +61,7 @@ export async function fetchStocksOnDate(supabase, tradeDate) {
   while (true) {
     const { data, error } = await supabase
       .from(TABLE)
-      .select('stock_id, stock_name, market, open_price, close_price, volume, amount')
+      .select('stock_id, stock_name, market, industry, open_price, close_price, volume, amount')
       .eq('trade_date', tradeDate)
       .order('stock_id', { ascending: true })
       .range(from, from + pageSize - 1)
@@ -68,15 +77,56 @@ export async function fetchStocksOnDate(supabase, tradeDate) {
 }
 
 /**
+ * 從列集合收集不重複產業（未分類永遠排第一）
+ * @returns {string[]}
+ */
+export function collectIndustryOptions(rows) {
+  const set = new Set()
+  for (const row of rows ?? []) {
+    const raw = String(row?.industry ?? '').trim()
+    if (raw) set.add(raw)
+  }
+  const rest = [...set].sort((a, b) => a.localeCompare(b, 'zh-Hant'))
+  return [UNCLASSIFIED_INDUSTRY, ...rest]
+}
+
+/**
+ * 載入產業選項：合併數個交易日快照的 industry（避免全表 DISTINCT）
+ * @param {string[]} tradeDates
+ */
+export async function fetchIndustryOptions(supabase, tradeDates = []) {
+  const dates = [...new Set((tradeDates ?? []).map(normalizeTradeDateKey).filter(Boolean))]
+  const set = new Set([UNCLASSIFIED_INDUSTRY])
+  for (const d of dates) {
+    const rows = await fetchStocksOnDate(supabase, d)
+    for (const row of rows) {
+      const raw = String(row?.industry ?? '').trim()
+      if (raw) set.add(raw)
+    }
+  }
+  const rest = [...set].filter((x) => x !== UNCLASSIFIED_INDUSTRY)
+  rest.sort((a, b) => a.localeCompare(b, 'zh-Hant'))
+  return [UNCLASSIFIED_INDUSTRY, ...rest]
+}
+
+/**
  * 從某日行情建立選股池代碼清單
+ * @param {object[]} rows
+ * @param {{ allowedIndustries?: Set<string>|null }} [options]
+ *   allowedIndustries: null/undefined=不限；Set=只保留這些（含 '(未分類)'）
  * @returns {Map<string, string>} stockId -> stockName
  */
-export function buildEligibleUniverse(rows) {
+export function buildEligibleUniverse(rows, options = {}) {
+  const allow = options.allowedIndustries
   const map = new Map()
   for (const row of rows) {
     const id = String(row.stock_id ?? '').trim()
     const name = String(row.stock_name ?? '').trim()
     if (!isMomentumEligibleStock(id, name)) continue
+    if (allow instanceof Set) {
+      const ind = normalizeIndustryKey(row.industry)
+      if (!allow.has(ind)) continue
+    }
     if (!map.has(id)) map.set(id, name)
   }
   return map

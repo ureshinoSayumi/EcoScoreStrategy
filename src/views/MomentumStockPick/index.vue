@@ -13,7 +13,7 @@
         :closable="false"
         class="mb-12"
         title="策略規則"
-        description="每輪：建倉可選「動能排名」或「隨機選股」→ 每 Y 交易日汰弱留強（仍依持股內動能）→ 持滿一輪後結算再重選。預設開盤價；可開「買高賣低」。僅 4 碼普通股，排除 ETF／DR。"
+        description="每輪：可先篩產業 → 建倉可選「動能排名」或「隨機選股」→ 每 Y 交易日汰弱留強（仍依持股內動能）→ 持滿一輪後結算再重選。預設開盤價；可開「買高賣低」。僅 4 碼普通股，排除 ETF／DR。"
       />
 
       <el-form label-width="130px">
@@ -33,6 +33,46 @@
             value-format="YYYY-MM-DD"
             :disabled="loading || running"
           />
+        </el-form-item>
+        <el-form-item label="產業別">
+          <div class="industry-field">
+            <el-select
+              v-model="selectedIndustries"
+              multiple
+              filterable
+              collapse-tags
+              collapse-tags-tooltip
+              :max-collapse-tags="2"
+              placeholder="載入產業中…"
+              style="width: min(520px, 100%)"
+              :disabled="loading || running || industryLoading"
+            >
+              <el-option
+                v-for="ind in industryOptions"
+                :key="ind"
+                :label="ind"
+                :value="ind"
+              />
+            </el-select>
+            <el-button
+              size="small"
+              :disabled="loading || running || industryLoading"
+              @click="selectAllIndustries"
+            >
+              全選
+            </el-button>
+            <el-button
+              size="small"
+              :disabled="loading || running || industryLoading"
+              @click="selectedIndustries = []"
+            >
+              清空
+            </el-button>
+          </div>
+          <span class="field-hint">
+            原始 industry 字串；空白為「(未分類)」。先濾產業再動能排名。已選
+            {{ selectedIndustries.length }}/{{ industryOptions.length }}
+          </span>
         </el-form-item>
 
         <el-divider content-position="left">策略參數</el-divider>
@@ -488,7 +528,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import { supabase, isSupabaseConfigured } from '@/lib/supabase'
@@ -500,6 +540,8 @@ import {
   indexOfDate,
   mergeUniverses,
   normalizeTradeDateKey,
+  fetchIndustryOptions,
+  UNCLASSIFIED_INDUSTRY,
 } from '@/utils/momentumRotationData'
 import {
   runMomentumRotationBacktest,
@@ -512,6 +554,9 @@ const supabaseReady = isSupabaseConfigured()
 
 const startDate = ref('2020-01-02')
 const endDate = ref('2025-12-31')
+const industryOptions = ref([UNCLASSIFIED_INDUSTRY])
+const selectedIndustries = ref([UNCLASSIFIED_INDUSTRY])
+const industryLoading = ref(false)
 const holdCount = ref(DEFAULT_MOMENTUM_PARAMS.holdCount)
 const selectionMode = ref(DEFAULT_MOMENTUM_PARAMS.selectionMode)
 const skipTop = ref(DEFAULT_MOMENTUM_PARAMS.skipTop)
@@ -582,6 +627,46 @@ const holdingSpanDays = computed(() =>
     ? maxHoldingDays.value
     : roundCycles.value * rebalanceInterval.value
 )
+
+function selectAllIndustries() {
+  selectedIndustries.value = [...industryOptions.value]
+}
+
+async function loadIndustryOptions() {
+  if (!supabaseReady || !supabase) return
+  industryLoading.value = true
+  try {
+    const from = startDate.value || '2020-01-01'
+    const to = endDate.value || from
+    const calendar = await fetchTradingCalendar(supabase, from, to)
+    const dates = []
+    if (calendar.length) {
+      dates.push(calendar[0], calendar[Math.floor(calendar.length / 2)], calendar[calendar.length - 1])
+    }
+    // 再補近期一日，增加產業覆蓋
+    const recentCal = await fetchTradingCalendar(
+      supabase,
+      shiftDateString(to, -40),
+      shiftDateString(to, 40)
+    )
+    if (recentCal.length) dates.push(recentCal[recentCal.length - 1])
+
+    const opts = await fetchIndustryOptions(supabase, dates)
+    industryOptions.value = opts
+    selectedIndustries.value = [...opts]
+  } catch (err) {
+    console.error(err)
+    ElMessage.warning(err.message || '產業列表載入失敗，仍可回測（未分類）')
+    industryOptions.value = [UNCLASSIFIED_INDUSTRY]
+    selectedIndustries.value = [UNCLASSIFIED_INDUSTRY]
+  } finally {
+    industryLoading.value = false
+  }
+}
+
+onMounted(() => {
+  loadIndustryOptions()
+})
 
 const TYPE_LABELS = {
   round_buy: '建倉',
@@ -787,22 +872,33 @@ async function runBacktest() {
       snapshotDates.add(calendar[idx])
     }
 
+    if (!selectedIndustries.value.length) {
+      throw new Error('請至少選擇一個產業別（可點「全選」）')
+    }
+    const allowedIndustries = new Set(selectedIndustries.value)
+    const universeOpts = { allowedIndustries }
+
     let universe = new Map()
     for (const d of snapshotDates) {
       const rows = await fetchStocksOnDate(supabase, d)
-      universe = mergeUniverses([universe, buildEligibleUniverse(rows)])
+      universe = mergeUniverses([universe, buildEligibleUniverse(rows, universeOpts)])
     }
     poolMeta.stockCount = universe.size
 
     if (universe.size < holdCount.value + skipTop.value) {
       const midDate = calendar[Math.floor(calendar.length / 2)]
-      const extra = buildEligibleUniverse(await fetchStocksOnDate(supabase, midDate))
+      const extra = buildEligibleUniverse(
+        await fetchStocksOnDate(supabase, midDate),
+        universeOpts
+      )
       universe = mergeUniverses([universe, extra])
       poolMeta.stockCount = universe.size
     }
 
     if (universe.size < holdCount.value) {
-      throw new Error(`選股池僅 ${universe.size} 檔，少於持股檔數 ${holdCount.value}`)
+      throw new Error(
+        `產業過濾後選股池僅 ${universe.size} 檔，少於持股檔數 ${holdCount.value}。請增加產業或降低持股檔數。`
+      )
     }
 
     progressPhase.value = '載入股價'
@@ -928,6 +1024,13 @@ async function runBacktest() {
   margin-left: 8px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+
+.industry-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .mb-12 {
