@@ -94,6 +94,34 @@
             {{ maxCullCount }} 次；剩 1 檔不提前賣，持有至結算日
           </span>
         </el-form-item>
+        <el-form-item label="汰弱檔數">
+          <el-radio-group v-model="cullSizeMode" :disabled="loading || running">
+            <el-radio value="fraction">除法（賣 1/N）</el-radio>
+            <el-radio value="fixed">固定檔數</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="cullSizeMode === 'fraction'" label="除數 N">
+          <el-input-number
+            v-model="cullFractionDivisor"
+            :min="2"
+            :max="20"
+            :disabled="loading || running"
+          />
+          <span class="field-hint">
+            目標賣 floor(持股/N)；N=2 即約一半。實際賣出仍看成交金額；至少留 1 檔
+          </span>
+        </el-form-item>
+        <el-form-item v-else label="固定汰弱檔數">
+          <el-input-number
+            v-model="cullFixedCount"
+            :min="1"
+            :max="200"
+            :disabled="loading || running"
+          />
+          <span class="field-hint">
+            每次目標賣這麼多檔（超過持股-1 會自動上限）；實際賣出仍看成交金額
+          </span>
+        </el-form-item>
         <el-form-item label="初始資金">
           <el-input-number
             v-model="initialCapital"
@@ -491,6 +519,9 @@ const rebalanceInterval = ref(DEFAULT_MOMENTUM_PARAMS.rebalanceInterval)
 const roundCycles = ref(DEFAULT_MOMENTUM_PARAMS.roundCycles)
 const holdingMode = ref(DEFAULT_MOMENTUM_PARAMS.holdingMode)
 const maxHoldingDays = ref(DEFAULT_MOMENTUM_PARAMS.maxHoldingDays)
+const cullSizeMode = ref(DEFAULT_MOMENTUM_PARAMS.cullSizeMode)
+const cullFractionDivisor = ref(DEFAULT_MOMENTUM_PARAMS.cullFractionDivisor)
+const cullFixedCount = ref(DEFAULT_MOMENTUM_PARAMS.cullFixedCount)
 const initialCapital = ref(DEFAULT_MOMENTUM_PARAMS.initialCapital)
 const feePercent = ref(DEFAULT_MOMENTUM_PARAMS.feeRate * 100)
 /** UI 用萬元；內部轉成元 */
@@ -615,16 +646,23 @@ function formatEventDetail(ev) {
     return `買入 ${ev.pickCount ?? 0} 檔`
   }
   if (ev.type === 'cull') {
+    if (ev.reason && !(ev.sold ?? []).length) {
+      return ev.reason
+    }
     const names = (ev.sold ?? []).map((s) => s.stockId).join('、')
     const addonN = (ev.addons ?? []).length
     const zeroN = ev.zeroForceCount ?? 0
+    const target =
+      ev.targetSellCount != null && ev.targetSellCount !== ev.sellCount
+        ? `目標 ${ev.targetSellCount}、`
+        : ''
     const zeroTip =
       zeroN > 0
         ? `；⚠ ${zeroN} 檔缺行情以 0 元出清${
             (ev.zeroForceIds ?? []).length ? `（${ev.zeroForceIds.join('、')}）` : ''
           }`
         : ''
-    return `賣 ${ev.sellCount ?? 0} 檔${names ? `（${names}）` : ''}，加碼 ${addonN} 檔，存活 ${ev.survivorCount ?? 0} 檔${zeroTip}`
+    return `${target}賣 ${ev.sellCount ?? 0} 檔${names ? `（${names}）` : ''}，加碼 ${addonN} 檔，存活 ${ev.survivorCount ?? 0} 檔${zeroTip}`
   }
   if (ev.type === 'settle') {
     return `全數賣出 ${(ev.sold ?? []).length} 檔，期末現金 ${formatMoney(ev.roundCash)}`
@@ -838,6 +876,9 @@ async function runBacktest() {
       roundCycles: roundCycles.value,
       holdingMode: holdingMode.value,
       maxHoldingDays: maxHoldingDays.value,
+      cullSizeMode: cullSizeMode.value,
+      cullFractionDivisor: cullFractionDivisor.value,
+      cullFixedCount: cullFixedCount.value,
       initialCapital: initialCapital.value,
       feeRate: feePercent.value / 100,
       minTurnover: minTurnoverWan.value * 10_000,

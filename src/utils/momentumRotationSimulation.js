@@ -24,6 +24,15 @@ export const DEFAULT_MOMENTUM_PARAMS = {
   /** 最低成交金額（元）；優先用 DB amount，缺值才用 volume×收盤價 */
   minTurnover: 5_000_000,
   /**
+   * 汰弱檔數：fraction=持股÷N（賣約 1/N）；fixed=固定賣 N 檔
+   * 實際賣出仍受成交金額門檻影響；且至少留 1 檔
+   */
+  cullSizeMode: 'fraction',
+  /** fraction 模式：除數 N（2=賣一半） */
+  cullFractionDivisor: 2,
+  /** fixed 模式：目標賣出檔數 */
+  cullFixedCount: 5,
+  /**
    * 汰弱賣出量能：prevDay=看 D-1；none=不看成交金額
    * （建倉固定看 D-1；結算仍看當天）
    */
@@ -38,6 +47,37 @@ export const DEFAULT_MOMENTUM_PARAMS = {
 
 function normalizeVolumeMode(v) {
   return v === 'none' ? 'none' : 'prevDay'
+}
+
+function normalizeCullSizeMode(v) {
+  return v === 'fixed' ? 'fixed' : 'fraction'
+}
+
+/**
+ * 本次汰弱「目標」賣出檔數（尚未套用成交金額門檻）
+ * - 持股 ≤1：0
+ * - 最多賣 n-1（至少留 1 檔給留強／加碼）
+ * - fraction：floor(n / divisor)；除數至少 2。結果為 0 則本次不汰
+ * - fixed：min(設定檔數, n-1)；設定 ≤0 則不汰
+ */
+export function calcCullSellCount(
+  positionCount,
+  { cullSizeMode = 'fraction', cullFractionDivisor = 2, cullFixedCount = 5 } = {}
+) {
+  const n = Math.floor(Number(positionCount) || 0)
+  if (n <= 1) return 0
+
+  const maxSell = n - 1
+  if (normalizeCullSizeMode(cullSizeMode) === 'fixed') {
+    const raw = Math.floor(Number(cullFixedCount) || 0)
+    if (raw <= 0) return 0
+    return Math.min(maxSell, raw)
+  }
+
+  const divisor = Math.max(2, Math.floor(Number(cullFractionDivisor) || 2))
+  const raw = Math.floor(n / divisor)
+  if (raw <= 0) return 0
+  return Math.min(maxSell, raw)
 }
 
 function hashSeed(str) {
@@ -110,6 +150,19 @@ export function normalizeMomentumParams(input = {}) {
     minTurnover: Math.max(
       0,
       Number(input.minTurnover) ?? DEFAULT_MOMENTUM_PARAMS.minTurnover
+    ),
+    cullSizeMode: normalizeCullSizeMode(
+      input.cullSizeMode ?? DEFAULT_MOMENTUM_PARAMS.cullSizeMode
+    ),
+    cullFractionDivisor: Math.max(
+      2,
+      Math.floor(
+        Number(input.cullFractionDivisor) || DEFAULT_MOMENTUM_PARAMS.cullFractionDivisor
+      )
+    ),
+    cullFixedCount: Math.max(
+      0,
+      Math.floor(Number(input.cullFixedCount) || DEFAULT_MOMENTUM_PARAMS.cullFixedCount)
     ),
     cullSellVolumeMode: normalizeVolumeMode(
       input.cullSellVolumeMode ?? DEFAULT_MOMENTUM_PARAMS.cullSellVolumeMode
@@ -577,6 +630,9 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     initialCapital,
     feeRate,
     minTurnover,
+    cullSizeMode,
+    cullFractionDivisor,
+    cullFixedCount,
     cullSellVolumeMode,
     cullAddonVolumeMode,
     skipLimitUpBuy,
@@ -817,6 +873,41 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       }
     }
 
+    const sellCount = calcCullSellCount(positions.length, {
+      cullSizeMode,
+      cullFractionDivisor,
+      cullFixedCount,
+    })
+    if (sellCount <= 0) {
+      recordEvent(
+        'cull',
+        actionDate,
+        {
+          sellCount: 0,
+          sold: [],
+          kept: positions.map((pos) => ({
+            stockId: pos.stockId,
+            stockName: pos.stockName,
+            momentumReturnPct: null,
+          })),
+          addons: [],
+          survivorCount: positions.length,
+          addonPerStock: 0,
+          reason: '目標賣出檔數為 0，略過本次汰弱',
+          cullSizeMode,
+          cullFractionDivisor,
+          cullFixedCount,
+          fillMode: buyHighSellLow ? 'buy_high_sell_low' : 'open',
+          cullSellVolumeMode,
+          cullAddonVolumeMode,
+          zeroForceCount: 0,
+          zeroForceIds: [],
+        },
+        positions
+      )
+      return { earlySettle: false }
+    }
+
     const heldIds = positions.map((p) => p.stockId)
     const ranked = rankByMomentum(
       heldIds,
@@ -828,7 +919,6 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       { buyHighSellLow }
     )
     const momentumMap = new Map(ranked.map((r) => [r.stockId, r.return]))
-    const sellCount = Math.ceil(positions.length / 2)
     const toSellIds = new Set(
       [...ranked].reverse().slice(0, sellCount).map((r) => r.stockId)
     )
@@ -913,12 +1003,16 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
 
     recordEvent('cull', actionDate, {
       sellCount: soldRecords.length,
+      targetSellCount: sellCount,
       sold: soldRecords,
       kept: keptRecords,
       addons: addonRecords,
       survivorCount: survivors.length,
       addonPerStock: survivors.length ? sellProceeds / survivors.length : 0,
       fillMode: buyHighSellLow ? 'buy_high_sell_low' : 'open',
+      cullSizeMode,
+      cullFractionDivisor,
+      cullFixedCount,
       cullSellVolumeMode,
       cullAddonVolumeMode,
       zeroForceCount: zeroForceIds.length,
