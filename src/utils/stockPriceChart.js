@@ -21,7 +21,7 @@ export async function fetchStockDailyPrices(
   while (true) {
     let q = supabase
       .from(table)
-      .select('trade_date, open_price, high_price, low_price, close_price, volume')
+      .select('trade_date, open_price, high_price, low_price, close_price, volume, amount')
       .eq('stock_id', stockId)
       .order('trade_date', { ascending: true })
       .range(from, from + pageSize - 1)

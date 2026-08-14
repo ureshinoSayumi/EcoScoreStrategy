@@ -113,28 +113,30 @@
           />
           <span class="field-hint">單边 %（買賣皆扣）</span>
         </el-form-item>
-        <el-form-item label="最低成交量">
+        <el-form-item label="最低成交金額">
           <el-input-number
-            v-model="minVolumeLots"
+            v-model="minTurnoverWan"
             :min="0"
-            :step="10"
+            :step="100"
             :disabled="loading || running"
           />
-          <span class="field-hint">張；建倉固定看 D-1，結算仍看當天；汰弱賣／加碼見下方</span>
+          <span class="field-hint">
+            萬元（DB 成交金額）；建倉固定看 D-1，結算仍看當天；汰弱賣／加碼見下方
+          </span>
         </el-form-item>
-        <el-form-item label="汰弱賣出量">
+        <el-form-item label="汰弱賣出金額">
           <el-radio-group v-model="cullSellVolumeMode" :disabled="loading || running">
             <el-radio value="prevDay">看 D-1</el-radio>
-            <el-radio value="none">不看量</el-radio>
+            <el-radio value="none">不看</el-radio>
           </el-radio-group>
-          <span class="field-hint">量不足則不賣、續抱；缺行情則 0 元出清</span>
+          <span class="field-hint">金額不足則不賣、續抱；缺行情則 0 元出清</span>
         </el-form-item>
-        <el-form-item label="汰弱加碼量">
+        <el-form-item label="汰弱加碼金額">
           <el-radio-group v-model="cullAddonVolumeMode" :disabled="loading || running">
             <el-radio value="prevDay">看 D-1</el-radio>
-            <el-radio value="none">不看量</el-radio>
+            <el-radio value="none">不看</el-radio>
           </el-radio-group>
-          <span class="field-hint">與賣出量能獨立；量不足則該檔不加碼、現金留下</span>
+          <span class="field-hint">與賣出獨立；金額不足則該檔不加碼、現金留下</span>
         </el-form-item>
         <el-form-item label="跳過漲停">
           <el-switch
@@ -491,7 +493,8 @@ const holdingMode = ref(DEFAULT_MOMENTUM_PARAMS.holdingMode)
 const maxHoldingDays = ref(DEFAULT_MOMENTUM_PARAMS.maxHoldingDays)
 const initialCapital = ref(DEFAULT_MOMENTUM_PARAMS.initialCapital)
 const feePercent = ref(DEFAULT_MOMENTUM_PARAMS.feeRate * 100)
-const minVolumeLots = ref(DEFAULT_MOMENTUM_PARAMS.minVolumeLots)
+/** UI 用萬元；內部轉成元 */
+const minTurnoverWan = ref(DEFAULT_MOMENTUM_PARAMS.minTurnover / 10_000)
 const cullSellVolumeMode = ref(DEFAULT_MOMENTUM_PARAMS.cullSellVolumeMode)
 const cullAddonVolumeMode = ref(DEFAULT_MOMENTUM_PARAMS.cullAddonVolumeMode)
 const skipLimitUpBuy = ref(DEFAULT_MOMENTUM_PARAMS.skipLimitUpBuy)
@@ -796,7 +799,7 @@ async function runBacktest() {
       calendar,
       scanFromIdx,
       lookback,
-      minVolumeLots.value,
+      minTurnoverWan.value * 10_000,
       1,
       buyHighSellLow.value,
       selectionMode.value === 'random' ? 0 : skipTop.value,
@@ -806,8 +809,8 @@ async function runBacktest() {
     if (validStartIdx < 0) {
       throw new Error(
         selectionMode.value === 'random'
-          ? `在 ${normalizeTradeDateKey(startDate.value)} 之後找不到可交易標的。請將起點再往后移，或降低最低成交量。`
-          : `在 ${normalizeTradeDateKey(startDate.value)} 之後，略過前 ${skipTop.value} 名後找不到可建倉標的。請將起點再往后移，或降低略過名次／最低成交量。`
+          ? `在 ${normalizeTradeDateKey(startDate.value)} 之後找不到可交易標的。請將起點再往后移，或降低最低成交金額。`
+          : `在 ${normalizeTradeDateKey(startDate.value)} 之後，略過前 ${skipTop.value} 名後找不到可建倉標的。請將起點再往后移，或降低略過名次／最低成交金額。`
       )
     }
 
@@ -837,7 +840,7 @@ async function runBacktest() {
       maxHoldingDays: maxHoldingDays.value,
       initialCapital: initialCapital.value,
       feeRate: feePercent.value / 100,
-      minVolumeLots: minVolumeLots.value,
+      minTurnover: minTurnoverWan.value * 10_000,
       cullSellVolumeMode: cullSellVolumeMode.value,
       cullAddonVolumeMode: cullAddonVolumeMode.value,
       skipLimitUpBuy: skipLimitUpBuy.value,
