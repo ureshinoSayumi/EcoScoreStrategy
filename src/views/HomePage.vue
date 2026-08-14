@@ -50,6 +50,7 @@ const routeItems = computed(() => {
     strategyCompare: '策略選股比較',
     holdingsRecord: '持股紀錄',
     momentumStockPick: '動能選股',
+    csvMomentumPick: 'CSV 名單動能回測',
     about: '關於',
   }
   return routes

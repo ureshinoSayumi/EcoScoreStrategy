@@ -74,6 +74,11 @@ const router = createRouter({
       component: () => import('@/views/MomentumStockPick/index.vue'),
     },
     {
+      path: '/csvMomentumPick',
+      name: 'csvMomentumPick',
+      component: () => import('@/views/CsvMomentumPick/index.vue'),
+    },
+    {
       path: '/about',
       name: 'about',
       component: () => import('../views/AboutView.vue'),

@@ -118,7 +118,12 @@ export function normalizeMomentumParams(input = {}) {
   )
   const holdCountRaw =
     input.holdCount != null ? input.holdCount : input.topCount
-  const selectionMode = input.selectionMode === 'random' ? 'random' : 'momentum'
+  const selectionMode =
+    input.selectionMode === 'random'
+      ? 'random'
+      : input.selectionMode === 'csv'
+        ? 'csv'
+        : 'momentum'
   return {
     holdCount: Math.max(
       1,
@@ -126,12 +131,12 @@ export function normalizeMomentumParams(input = {}) {
     ),
     selectionMode,
     skipTop:
-      selectionMode === 'random'
-        ? 0
-        : Math.max(
+      selectionMode === 'momentum'
+        ? Math.max(
             0,
             Math.floor(Number(input.skipTop) || DEFAULT_MOMENTUM_PARAMS.skipTop)
-          ),
+          )
+        : 0,
     rebalanceInterval,
     roundCycles: Math.max(
       1,
@@ -456,6 +461,47 @@ export function diagnoseRankFailure(
 }
 
 /**
+ * CSV 名單模式：找第一個「該日有名單且至少 minPicks 檔可交易」的交易日
+ * @param {Map<string, { stockId: string, stockName?: string }[]>} entryPicksByDate
+ */
+export function findFirstValidCsvActionIdx(
+  entryPicksByDate,
+  stockData,
+  calendar,
+  fromIdx,
+  minTurnover,
+  minPicks = 1,
+  buyHighSellLow = false,
+  lookbackDays = 0
+) {
+  const minIdx = getMinActionIdx(Math.max(1, lookbackDays || 1))
+  const start = Math.max(fromIdx, minIdx)
+  const need = Math.max(1, Math.floor(Number(minPicks) || 1))
+
+  for (let idx = start; idx < calendar.length; idx++) {
+    const actionDate = calendar[idx]
+    const picks = entryPicksByDate?.get?.(actionDate)
+    if (!picks?.length) continue
+
+    const volumeDate = idx > 0 ? calendar[idx - 1] : null
+    if (!volumeDate) continue
+
+    let ok = 0
+    for (const pick of picks) {
+      const series = stockData.get(pick.stockId)
+      if (
+        series &&
+        isTradableOnDay(series, actionDate, minTurnover, buyHighSellLow, volumeDate)
+      ) {
+        ok += 1
+        if (ok >= need) return idx
+      }
+    }
+  }
+  return -1
+}
+
+/**
  * 從 fromIdx 起往後找第一個可建倉的交易日
  * momentum：略過前 skipTop 名後至少 minPicks 檔可交易
  * random：池內至少 minPicks 檔可交易
@@ -643,6 +689,12 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
   const universeIds = [...stockData.keys()]
   const { roundTradingDays, cullOffsets } = buildRoundPlan(params)
 
+  /** @type {Map<string, { stockId: string, stockName?: string }[]>} */
+  const entryPicksByDate =
+    rawParams.entryPicksByDate instanceof Map
+      ? rawParams.entryPicksByDate
+      : new Map(Object.entries(rawParams.entryPicksByDate || {}))
+
   let cash = initialCapital
   /** @type {Position[]} */
   let positions = []
@@ -684,6 +736,25 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
   }
 
   function buildEntryCandidates(actionDate, actionIdx) {
+    if (selectionMode === 'csv') {
+      const picks = entryPicksByDate.get(actionDate) || []
+      const lookbackEnd = calendar[actionIdx - 1]
+      const lookbackStart = calendar[actionIdx - 1 - lookbackDays]
+      return picks.map((pick, i) => {
+        const series = stockData.get(pick.stockId)
+        const ret =
+          series && lookbackStart && lookbackEnd
+            ? calcCloseReturn(series, lookbackStart, lookbackEnd)
+            : null
+        return {
+          stockId: pick.stockId,
+          stockName: series?.stockName || pick.stockName || pick.stockId,
+          return: ret,
+          momentumRank: i + 1,
+        }
+      })
+    }
+
     if (selectionMode === 'random') {
       const lookbackEnd = calendar[actionIdx - 1]
       const lookbackStart = calendar[actionIdx - 1 - lookbackDays]
@@ -727,23 +798,25 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     const candidates = buildEntryCandidates(actionDate, actionIdx)
     if (!candidates.length) {
       const reason =
-        selectionMode === 'random'
-          ? '選股池無可用標的'
-          : diagnoseRankFailure(
-              universeIds,
-              stockData,
-              calendar,
-              actionIdx,
-              lookbackDays,
-              minTurnover,
-              buyHighSellLow
-            )
+        selectionMode === 'csv'
+          ? `CSV 名單在 ${actionDate} 無標的`
+          : selectionMode === 'random'
+            ? '選股池無可用標的'
+            : diagnoseRankFailure(
+                universeIds,
+                stockData,
+                calendar,
+                actionIdx,
+                lookbackDays,
+                minTurnover,
+                buyHighSellLow
+              )
       recordEvent('buy_skip', actionDate, {
         reason:
-          selectionMode === 'random'
-            ? reason
-            : `略過前 ${skipTop} 名後無可選標的；${reason}`,
-        skipTop: selectionMode === 'random' ? 0 : skipTop,
+          selectionMode === 'momentum'
+            ? `略過前 ${skipTop} 名後無可選標的；${reason}`
+            : reason,
+        skipTop: selectionMode === 'momentum' ? skipTop : 0,
         holdCount,
         selectionMode,
       })
@@ -809,11 +882,12 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       buys: buyRecords,
       pickCount: buyRecords.length,
       holdCount,
-      skipTop: selectionMode === 'random' ? 0 : skipTop,
+      skipTop: selectionMode === 'momentum' ? skipTop : 0,
       selectionMode,
       budget,
       fillMode: buyHighSellLow ? 'buy_high_sell_low' : 'open',
       volumeMode: 'prevDay',
+      csvListSize: selectionMode === 'csv' ? candidates.length : undefined,
     }, opened)
 
     return opened
@@ -1071,6 +1145,21 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
   }
 
   while (startIdx <= lastAllowedIdx) {
+    if (selectionMode === 'csv') {
+      const nextCsvIdx = findFirstValidCsvActionIdx(
+        entryPicksByDate,
+        stockData,
+        calendar,
+        startIdx,
+        minTurnover,
+        1,
+        buyHighSellLow,
+        lookbackDays
+      )
+      if (nextCsvIdx < 0) break
+      startIdx = nextCsvIdx
+    }
+
     roundNo += 1
     const roundStartIdx = startIdx
     const roundStartDate = calendar[roundStartIdx]
@@ -1083,6 +1172,11 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     positions = openInitialPositions(roundStartDate, roundStartIdx)
 
     if (!positions.length) {
+      if (selectionMode === 'csv') {
+        startIdx = roundStartIdx + 1
+        roundNo -= 1
+        continue
+      }
       roundSummaries.push({
         roundNo,
         settleDate: roundStartDate,
