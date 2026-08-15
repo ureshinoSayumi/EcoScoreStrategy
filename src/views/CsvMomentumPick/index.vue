@@ -102,6 +102,7 @@
           <el-radio-group v-model="cullSizeMode" :disabled="loading || running">
             <el-radio value="fraction">除法（賣 1/N）</el-radio>
             <el-radio value="fixed">固定檔數</el-radio>
+            <el-radio value="negativeReturn">過去 Y 日負報酬</el-radio>
           </el-radio-group>
         </el-form-item>
         <el-form-item v-if="cullSizeMode === 'fraction'" label="除數 N">
@@ -115,7 +116,7 @@
             目標賣 floor(持股/N)；N=2 即約一半。實際賣出仍看成交金額；至少留 1 檔
           </span>
         </el-form-item>
-        <el-form-item v-else label="固定汰弱檔數">
+        <el-form-item v-else-if="cullSizeMode === 'fixed'" label="固定汰弱檔數">
           <el-input-number
             v-model="cullFixedCount"
             :min="1"
@@ -124,6 +125,11 @@
           />
           <span class="field-hint">
             每次目標賣這麼多檔（超過持股-1 會自動上限）；實際賣出仍看成交金額
+          </span>
+        </el-form-item>
+        <el-form-item v-else label="負報酬汰弱">
+          <span class="field-hint">
+            淘汰過去 Y 日漲幅 &lt; 0（或缺資料）；賣完若 0 檔則強制結算；金額關卡賣不掉則續抱
           </span>
         </el-form-item>
         <el-form-item label="初始資金">
@@ -702,7 +708,9 @@ function formatEventDetail(ev) {
             (ev.zeroForceIds ?? []).length ? `（${ev.zeroForceIds.join('、')}）` : ''
           }`
         : ''
-    return `${target}賣 ${ev.sellCount ?? 0} 檔${names ? `（${names}）` : ''}，加碼 ${addonN} 檔，存活 ${ev.survivorCount ?? 0} 檔${zeroTip}`
+    const emptyTip =
+      ev.survivorCount === 0 && (ev.sellCount ?? 0) > 0 ? '；強制結算' : ''
+    return `${target}賣 ${ev.sellCount ?? 0} 檔${names ? `（${names}）` : ''}，加碼 ${addonN} 檔，存活 ${ev.survivorCount ?? 0} 檔${zeroTip}${emptyTip}`
   }
   if (ev.type === 'settle') {
     return `全數賣出 ${(ev.sold ?? []).length} 檔，期末現金 ${formatMoney(ev.roundCash)}`

@@ -50,25 +50,28 @@ function normalizeVolumeMode(v) {
 }
 
 function normalizeCullSizeMode(v) {
-  return v === 'fixed' ? 'fixed' : 'fraction'
+  if (v === 'fixed') return 'fixed'
+  if (v === 'negativeReturn') return 'negativeReturn'
+  return 'fraction'
 }
 
 /**
  * 本次汰弱「目標」賣出檔數（尚未套用成交金額門檻）
- * - 持股 ≤1：0
- * - 最多賣 n-1（至少留 1 檔給留強／加碼）
- * - fraction：floor(n / divisor)；除數至少 2。結果為 0 則本次不汰
- * - fixed：min(設定檔數, n-1)；設定 ≤0 則不汰
+ * - fraction / fixed：持股 ≤1 → 0；最多賣 n-1
+ * - negativeReturn：由此函式不決定名單，回傳 -1 表示改走負報酬邏輯
  */
 export function calcCullSellCount(
   positionCount,
   { cullSizeMode = 'fraction', cullFractionDivisor = 2, cullFixedCount = 5 } = {}
 ) {
+  const mode = normalizeCullSizeMode(cullSizeMode)
+  if (mode === 'negativeReturn') return -1
+
   const n = Math.floor(Number(positionCount) || 0)
   if (n <= 1) return 0
 
   const maxSell = n - 1
-  if (normalizeCullSizeMode(cullSizeMode) === 'fixed') {
+  if (mode === 'fixed') {
     const raw = Math.floor(Number(cullFixedCount) || 0)
     if (raw <= 0) return 0
     return Math.min(maxSell, raw)
@@ -940,62 +943,122 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
   }
 
   function cullWeak(actionDate, actionIdx) {
-    if (positions.length <= 1) {
+    if (!positions.length) {
+      return { earlySettle: true, reason: '無持股' }
+    }
+
+    const isNegMode = cullSizeMode === 'negativeReturn'
+
+    if (!isNegMode && positions.length <= 1) {
       return {
         earlySettle: holdingMode === 'cycles',
         reason: '僅剩 1 檔，無法汰弱',
       }
     }
 
-    const sellCount = calcCullSellCount(positions.length, {
-      cullSizeMode,
-      cullFractionDivisor,
-      cullFixedCount,
-    })
-    if (sellCount <= 0) {
-      recordEvent(
-        'cull',
-        actionDate,
-        {
-          sellCount: 0,
-          sold: [],
-          kept: positions.map((pos) => ({
-            stockId: pos.stockId,
-            stockName: pos.stockName,
-            momentumReturnPct: null,
-          })),
-          addons: [],
-          survivorCount: positions.length,
-          addonPerStock: 0,
-          reason: '目標賣出檔數為 0，略過本次汰弱',
-          cullSizeMode,
-          cullFractionDivisor,
-          cullFixedCount,
-          fillMode: buyHighSellLow ? 'buy_high_sell_low' : 'open',
-          cullSellVolumeMode,
-          cullAddonVolumeMode,
-          zeroForceCount: 0,
-          zeroForceIds: [],
-        },
-        positions
-      )
-      return { earlySettle: false }
-    }
-
     const heldIds = positions.map((p) => p.stockId)
-    const ranked = rankByMomentum(
-      heldIds,
-      stockData,
-      calendar,
-      actionIdx,
-      lookbackDays,
-      minTurnover,
-      { buyHighSellLow }
-    )
-    const momentumMap = new Map(ranked.map((r) => [r.stockId, r.return]))
-    const toSellIds = new Set(
-      [...ranked].reverse().slice(0, sellCount).map((r) => r.stockId)
-    )
+    const lookbackEnd = calendar[actionIdx - 1]
+    const lookbackStart = calendar[actionIdx - 1 - lookbackDays]
+
+    /** @type {Map<string, number|null>} */
+    const momentumMap = new Map()
+    /** @type {Set<string>} */
+    let toSellIds
+
+    let targetSellCount = 0
+
+    if (isNegMode) {
+      toSellIds = new Set()
+      for (const stockId of heldIds) {
+        const series = stockData.get(stockId)
+        const ret =
+          series && lookbackStart && lookbackEnd
+            ? calcCloseReturn(series, lookbackStart, lookbackEnd)
+            : null
+        momentumMap.set(stockId, ret)
+        // 負報酬或算不出漲幅 → 淘汰
+        if (ret == null || ret < 0) toSellIds.add(stockId)
+      }
+      targetSellCount = toSellIds.size
+      if (targetSellCount <= 0) {
+        recordEvent(
+          'cull',
+          actionDate,
+          {
+            sellCount: 0,
+            targetSellCount: 0,
+            sold: [],
+            kept: positions.map((pos) => ({
+              stockId: pos.stockId,
+              stockName: pos.stockName,
+              momentumReturnPct: toMomentumPct(momentumMap.get(pos.stockId)),
+            })),
+            addons: [],
+            survivorCount: positions.length,
+            addonPerStock: 0,
+            reason: '過去 Y 日無負報酬標的，略過本次汰弱',
+            cullSizeMode,
+            fillMode: buyHighSellLow ? 'buy_high_sell_low' : 'open',
+            cullSellVolumeMode,
+            cullAddonVolumeMode,
+            zeroForceCount: 0,
+            zeroForceIds: [],
+          },
+          positions
+        )
+        return { earlySettle: false }
+      }
+    } else {
+      const sellCount = calcCullSellCount(positions.length, {
+        cullSizeMode,
+        cullFractionDivisor,
+        cullFixedCount,
+      })
+      targetSellCount = sellCount
+      if (sellCount <= 0) {
+        recordEvent(
+          'cull',
+          actionDate,
+          {
+            sellCount: 0,
+            sold: [],
+            kept: positions.map((pos) => ({
+              stockId: pos.stockId,
+              stockName: pos.stockName,
+              momentumReturnPct: null,
+            })),
+            addons: [],
+            survivorCount: positions.length,
+            addonPerStock: 0,
+            reason: '目標賣出檔數為 0，略過本次汰弱',
+            cullSizeMode,
+            cullFractionDivisor,
+            cullFixedCount,
+            fillMode: buyHighSellLow ? 'buy_high_sell_low' : 'open',
+            cullSellVolumeMode,
+            cullAddonVolumeMode,
+            zeroForceCount: 0,
+            zeroForceIds: [],
+          },
+          positions
+        )
+        return { earlySettle: false }
+      }
+
+      const ranked = rankByMomentum(
+        heldIds,
+        stockData,
+        calendar,
+        actionIdx,
+        lookbackDays,
+        minTurnover,
+        { buyHighSellLow }
+      )
+      for (const r of ranked) momentumMap.set(r.stockId, r.return)
+      toSellIds = new Set(
+        [...ranked].reverse().slice(0, sellCount).map((r) => r.stockId)
+      )
+    }
 
     const survivors = []
     const soldRecords = []
@@ -1020,7 +1083,6 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
 
     if (soldRecords.length && survivors.length) {
       // 賣出所得已在 executeCullSell 進 cash；此處只把要加碼的份額再扣掉。
-      // 加碼失敗 → 不動 cash（該份原本就留在現金裡），不可再 +=，否則會重複入帳。
       const addonEach = sellProceeds / survivors.length
       for (const pos of survivors) {
         const series = stockData.get(pos.stockId)
@@ -1065,7 +1127,6 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
         })
       }
     }
-    // sellProceeds 已在 executeCullSell 入帳；無存活可加碼時不必再 +=
 
     const keptRecords = survivors.map((pos) => ({
       stockId: pos.stockId,
@@ -1073,26 +1134,36 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       momentumReturnPct: toMomentumPct(momentumMap.get(pos.stockId)),
     }))
 
-    recordEvent('cull', actionDate, {
-      sellCount: soldRecords.length,
-      targetSellCount: sellCount,
-      sold: soldRecords,
-      kept: keptRecords,
-      addons: addonRecords,
-      survivorCount: survivors.length,
-      addonPerStock: survivors.length ? sellProceeds / survivors.length : 0,
-      fillMode: buyHighSellLow ? 'buy_high_sell_low' : 'open',
-      cullSizeMode,
-      cullFractionDivisor,
-      cullFixedCount,
-      cullSellVolumeMode,
-      cullAddonVolumeMode,
-      zeroForceCount: zeroForceIds.length,
-      zeroForceIds,
-    }, survivors)
+    const forceSettleEmpty = isNegMode && survivors.length === 0
+
+    recordEvent(
+      'cull',
+      actionDate,
+      {
+        sellCount: soldRecords.length,
+        targetSellCount,
+        sold: soldRecords,
+        kept: keptRecords,
+        addons: addonRecords,
+        survivorCount: survivors.length,
+        addonPerStock: survivors.length ? sellProceeds / survivors.length : 0,
+        fillMode: buyHighSellLow ? 'buy_high_sell_low' : 'open',
+        cullSizeMode,
+        cullFractionDivisor,
+        cullFixedCount,
+        cullSellVolumeMode,
+        cullAddonVolumeMode,
+        zeroForceCount: zeroForceIds.length,
+        zeroForceIds,
+        reason: forceSettleEmpty
+          ? '負報酬全數出清（或目標全汰且已賣完），強制結算'
+          : undefined,
+      },
+      survivors
+    )
 
     positions = survivors
-    return { earlySettle: false }
+    return { earlySettle: forceSettleEmpty }
   }
 
   function settleAll(actionDate, roundStartCash, extra = {}) {
@@ -1199,7 +1270,7 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       if (cullIdx > lastAllowedIdx) break
       const cullDate = calendar[cullIdx]
 
-      if (positions.length <= 1) {
+      if (positions.length <= 1 && cullSizeMode !== 'negativeReturn') {
         if (holdingMode === 'cycles') {
           settleIdx = cullIdx
           earlySettle = true
@@ -1218,9 +1289,15 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
 
     const settleDate = calendar[settleIdx]
     settleAll(settleDate, roundStartCash, {
-      earlySettle: earlySettle && holdingMode === 'cycles',
+      earlySettle:
+        earlySettle &&
+        (holdingMode === 'cycles' || cullSizeMode === 'negativeReturn'),
       forcedEndSettle,
-      note: forcedEndSettle ? '回測結束強制結算' : undefined,
+      note: forcedEndSettle
+        ? '回測結束強制結算'
+        : earlySettle && cullSizeMode === 'negativeReturn'
+          ? '負報酬出清後無持股，強制結算'
+          : undefined,
     })
 
     startIdx = settleIdx + 1
