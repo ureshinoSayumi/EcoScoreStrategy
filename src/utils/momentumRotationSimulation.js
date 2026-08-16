@@ -43,6 +43,14 @@ export const DEFAULT_MOMENTUM_PARAMS = {
   /** 最倒楣成交：買用最高價、賣用最低價 */
   buyHighSellLow: false,
   lookbackDays: null, // null = 同 rebalanceInterval
+  /**
+   * 結算贏家續抱：結算日若 D-1 仍為正報酬且收盤 ≥ SMA(XX)，不賣、獨立袖套續抱
+   * 跌破均線（D-1）→ 次日開盤賣；損益歸屬原輪 endingCash
+   */
+  winnerTrailEnabled: false,
+  winnerTrailSmaPeriod: 20,
+  /** 0 = 不限制；否則續抱達此交易日數強制出場 */
+  winnerTrailMaxDays: 0,
 }
 
 function normalizeVolumeMode(v) {
@@ -183,11 +191,37 @@ export function normalizeMomentumParams(input = {}) {
     lookbackDays: input.lookbackDays != null
       ? Math.max(1, Math.floor(Number(input.lookbackDays)))
       : rebalanceInterval,
+    winnerTrailEnabled: Boolean(input.winnerTrailEnabled),
+    winnerTrailSmaPeriod: Math.max(
+      2,
+      Math.floor(
+        Number(input.winnerTrailSmaPeriod) || DEFAULT_MOMENTUM_PARAMS.winnerTrailSmaPeriod
+      )
+    ),
+    winnerTrailMaxDays: Math.max(
+      0,
+      Math.floor(
+        Number(input.winnerTrailMaxDays) || DEFAULT_MOMENTUM_PARAMS.winnerTrailMaxDays
+      )
+    ),
   }
 }
 
 function getBar(series, date) {
   return series?.barsByDate?.get(date) ?? null
+}
+
+/** 含 endIdx 往前 period 根收盤均線；缺棒回 null */
+export function calcSmaCloseAtIdx(series, calendar, endIdx, period) {
+  const p = Math.max(1, Math.floor(Number(period) || 1))
+  if (endIdx < p - 1) return null
+  let sum = 0
+  for (let i = endIdx - p + 1; i <= endIdx; i++) {
+    const close = getBar(series, calendar[i])?.close
+    if (!(close > 0)) return null
+    sum += close
+  }
+  return sum / p
 }
 
 /** 漲幅 = (期末收盤 - 期初收盤) / 期初收盤 */
@@ -687,6 +721,9 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     skipLimitUpBuy,
     buyHighSellLow,
     lookbackDays,
+    winnerTrailEnabled,
+    winnerTrailSmaPeriod,
+    winnerTrailMaxDays,
   } = params
 
   const universeIds = [...stockData.keys()]
@@ -701,6 +738,9 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
   let cash = initialCapital
   /** @type {Position[]} */
   let positions = []
+  /** 結算續抱袖套（不參與汰弱／加碼） */
+  /** @type {Array<Position & { originRoundNo: number, trailStartIdx: number, trailStartDate: string }>} */
+  let trailPositions = []
   /** @type {object[]} */
   const events = []
   /** @type {object[]} */
@@ -709,6 +749,13 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
   const roundSummaries = []
 
   let roundNo = 0
+  /** 續抱已處理到的交易日索引（含） */
+  let trailCursor = -1
+  /**
+   * 本輪開始後、由「其他輪」續抱出場流入的現金。
+   * 結算時必須從 endingCash 扣除，否則會把長尾現金重複算成下一輪報酬。
+   */
+  let foreignTrailInflowThisRound = 0
   const requestedStartIdx = indexOfDate(calendar, rawParams.startDate)
   const minStartIdx = getMinActionIdx(lookbackDays)
   let startIdx =
@@ -727,7 +774,12 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     : calendar.length
   const lastAllowedIdx = endIdxLimit >= 0 ? endIdxLimit - 1 : calendar.length - 1
 
-  function recordEvent(type, date, detail = {}, positionsSnapshot = positions) {
+  function allHeldPositions() {
+    return [...positions, ...trailPositions]
+  }
+
+  function recordEvent(type, date, detail = {}, positionsSnapshot = null) {
+    const held = positionsSnapshot ?? allHeldPositions()
     events.push({
       type,
       date,
@@ -735,7 +787,147 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       lookbackDays,
       ...detail,
     })
-    history.push(snapshotState(cash, positionsSnapshot, stockData, date, initialCapital))
+    history.push(snapshotState(cash, held, stockData, date, initialCapital))
+  }
+
+  function applyTrailProceedsToRound(originRoundNo, proceeds) {
+    const summary = roundSummaries.find((r) => r.roundNo === originRoundNo)
+    if (!summary) return
+    const nextEnding = Number(summary.endingCash) + proceeds
+    summary.endingCash = Math.round(nextEnding * 100) / 100
+    const start = Number(summary.startingCash)
+    summary.returnPct =
+      start > 0 ? Math.round((summary.endingCash / start - 1) * 10000) / 100 : 0
+    summary.trailPendingCount = Math.max(0, (summary.trailPendingCount ?? 1) - 1)
+    summary.trailExitCount = (summary.trailExitCount ?? 0) + 1
+    if (summary.trailPendingCount > 0) {
+      summary.trailNote = `續抱中 ${summary.trailPendingCount} 檔（已補記 ${summary.trailExitCount}）`
+    } else if (summary.trailExitCount > 0) {
+      summary.trailNote = `長尾已補記（${summary.trailExitCount} 檔）`
+    } else {
+      summary.trailNote = ''
+    }
+  }
+
+  function sellTrailPosition(pos, actionDate, note) {
+    const series = stockData.get(pos.stockId)
+    const bar = getBar(series, actionDate)
+    let sellPrice = getSellFillPrice(bar, buyHighSellLow)
+    let usedFallback = false
+    if (sellPrice == null || sellPrice <= 0) {
+      sellPrice = buyHighSellLow
+        ? (getSellFillPrice(bar, true) ?? bar?.close ?? 0)
+        : (bar?.close ?? 0)
+      usedFallback = true
+    }
+    const { proceeds } = sellAtOpen(pos.shares, sellPrice, feeRate)
+    cash += proceeds
+    // 非本輪的續抱出場：進總資金，但不應算進「本輪」結算報酬
+    if (pos.originRoundNo !== roundNo) {
+      foreignTrailInflowThisRound += proceeds
+    }
+    const ret = pos.costBasis > 0 ? proceeds / pos.costBasis - 1 : 0
+    const detail = buildSoldDetail(pos, actionDate, {
+      sold: true,
+      proceeds,
+      return: ret,
+      sellPrice,
+      note:
+        note +
+        (usedFallback
+          ? '；無開盤改備援估價'
+          : ''),
+    })
+    detail.originRoundNo = pos.originRoundNo
+    detail.trailStartDate = pos.trailStartDate
+    detail.trail = true
+    applyTrailProceedsToRound(pos.originRoundNo, proceeds)
+    return detail
+  }
+
+  /** 處理 (trailCursor, upToIdx] 各日開盤的續抱出場 */
+  function advanceTrailsTo(upToIdx, { forceAll = false } = {}) {
+    if (!winnerTrailEnabled && !trailPositions.length) {
+      trailCursor = Math.max(trailCursor, upToIdx)
+      return
+    }
+    const end = Math.min(upToIdx, lastAllowedIdx)
+    for (let idx = trailCursor + 1; idx <= end; idx++) {
+      const date = calendar[idx]
+      if (!date || !trailPositions.length) {
+        trailCursor = idx
+        continue
+      }
+
+      const kept = []
+      const soldRecords = []
+      for (const pos of trailPositions) {
+        if (idx <= pos.trailStartIdx) {
+          kept.push(pos)
+          continue
+        }
+
+        const heldDays = idx - pos.trailStartIdx
+        const hitMax = winnerTrailMaxDays > 0 && heldDays >= winnerTrailMaxDays
+        const forceEnd = forceAll && idx === lastAllowedIdx
+
+        let breakMa = false
+        const sigIdx = idx - 1
+        if (sigIdx >= 0) {
+          const series = stockData.get(pos.stockId)
+          const close = getBar(series, calendar[sigIdx])?.close
+          const sma = calcSmaCloseAtIdx(
+            series,
+            calendar,
+            sigIdx,
+            winnerTrailSmaPeriod
+          )
+          if (close != null && sma != null && close < sma) breakMa = true
+        }
+
+        if (hitMax || breakMa || forceEnd) {
+          let note = '續抱出場'
+          if (forceEnd) note = '回測結束強制結束續抱'
+          else if (hitMax) note = `續抱達上限 ${winnerTrailMaxDays} 日出場`
+          else if (breakMa) note = `跌破 SMA${winnerTrailSmaPeriod} 出場`
+          soldRecords.push(sellTrailPosition(pos, date, note))
+        } else {
+          kept.push(pos)
+        }
+      }
+
+      trailPositions = kept
+      if (soldRecords.length) {
+        const originHint = soldRecords[0]?.originRoundNo
+        recordEvent(
+          'trail_exit',
+          date,
+          {
+            roundNo: originHint ?? roundNo,
+            sold: soldRecords,
+            remainingTrailCount: trailPositions.length,
+          },
+          allHeldPositions()
+        )
+      }
+      trailCursor = idx
+    }
+  }
+
+  function qualifiesWinnerTrail(pos, settleIdx) {
+    if (!winnerTrailEnabled) return false
+    if (settleIdx < 1) return false
+    const sigIdx = settleIdx - 1
+    if (sigIdx < winnerTrailSmaPeriod - 1) return false
+    const series = stockData.get(pos.stockId)
+    if (!series) return false
+    const sigBar = getBar(series, calendar[sigIdx])
+    if (!(sigBar?.close > 0)) return false
+    const markValue = pos.shares * sigBar.close
+    if (!(pos.costBasis > 0) || !(markValue / pos.costBasis > 1)) return false
+    const sma = calcSmaCloseAtIdx(series, calendar, sigIdx, winnerTrailSmaPeriod)
+    if (sma == null || !(sigBar.close >= sma)) return false
+    return true
   }
 
   function buildEntryCandidates(actionDate, actionIdx) {
@@ -831,9 +1023,11 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     const opened = []
     /** @type {object[]} */
     const buyRecords = []
+    const trailHeldIds = new Set(trailPositions.map((p) => p.stockId))
 
     for (const pick of candidates) {
       if (opened.length >= holdCount) break
+      if (trailHeldIds.has(pick.stockId)) continue
 
       const series = stockData.get(pick.stockId)
       if (!series) continue
@@ -891,7 +1085,8 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       fillMode: buyHighSellLow ? 'buy_high_sell_low' : 'open',
       volumeMode: 'prevDay',
       csvListSize: selectionMode === 'csv' ? candidates.length : undefined,
-    }, opened)
+      trailHeldCount: trailPositions.length,
+    }, [...opened, ...trailPositions])
 
     return opened
   }
@@ -1004,7 +1199,7 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
             zeroForceCount: 0,
             zeroForceIds: [],
           },
-          positions
+          [...positions, ...trailPositions]
         )
         return { earlySettle: false }
       }
@@ -1040,7 +1235,7 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
             zeroForceCount: 0,
             zeroForceIds: [],
           },
-          positions
+          [...positions, ...trailPositions]
         )
         return { earlySettle: false }
       }
@@ -1158,17 +1353,43 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
         reason: forceSettleEmpty
           ? '負報酬全數出清（或目標全汰且已賣完），強制結算'
           : undefined,
+        trailHeldCount: trailPositions.length,
       },
-      survivors
+      [...survivors, ...trailPositions]
     )
 
     positions = survivors
     return { earlySettle: forceSettleEmpty }
   }
 
-  function settleAll(actionDate, roundStartCash, extra = {}) {
+  function settleAll(actionDate, settleIdx, roundStartCash, extra = {}) {
     const soldRecords = []
+    const trailedRecords = []
+    const nextTrail = []
+
     for (const pos of positions) {
+      if (qualifiesWinnerTrail(pos, settleIdx)) {
+        const trailPos = {
+          ...pos,
+          addons: pos.addons.map((a) => ({ ...a })),
+          originRoundNo: roundNo,
+          trailStartIdx: settleIdx,
+          trailStartDate: actionDate,
+        }
+        nextTrail.push(trailPos)
+        trailedRecords.push({
+          stockId: pos.stockId,
+          stockName: pos.stockName,
+          initialBuyDate: pos.initialBuyDate,
+          initialBuyPrice: pos.initialBuyPrice,
+          initialBuyAmount: pos.initialBuyAmount,
+          totalCostBasis: pos.costBasis,
+          trailStartDate: actionDate,
+          note: `正報酬且站上 SMA${winnerTrailSmaPeriod}，續抱`,
+        })
+        continue
+      }
+
       const result = executeSettleSell(pos, actionDate)
       if (result.sold) {
         soldRecords.push(buildSoldDetail(pos, actionDate, result))
@@ -1194,23 +1415,52 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     }
 
     positions = []
-    const netBefore = cash
-    recordEvent('settle', actionDate, {
-      sold: soldRecords,
-      roundCash: netBefore,
-    })
+    trailPositions = trailPositions.concat(nextTrail)
+    // 扣除他輪續抱流入、尚未投入本輪的現金，避免輪次報酬灌水
+    const attributedEnding = Math.max(0, cash - foreignTrailInflowThisRound)
+    const netBefore = Math.round(attributedEnding * 100) / 100
+    recordEvent(
+      'settle',
+      actionDate,
+      {
+        sold: soldRecords,
+        trailed: trailedRecords,
+        trailCount: trailedRecords.length,
+        remainingTrailCount: trailPositions.length,
+        roundCash: netBefore,
+        portfolioCash: Math.round(cash * 100) / 100,
+        foreignTrailInflow: Math.round(foreignTrailInflowThisRound * 100) / 100,
+        winnerTrailEnabled,
+        winnerTrailSmaPeriod,
+      },
+      allHeldPositions()
+    )
 
+    const trailPendingCount = trailedRecords.length
     roundSummaries.push({
       roundNo,
       settleDate: actionDate,
       startingCash: roundStartCash,
       endingCash: netBefore,
-      returnPct: Math.round((netBefore / roundStartCash - 1) * 10000) / 100,
-      pickCount: soldRecords.length,
+      returnPct:
+        roundStartCash > 0
+          ? Math.round((netBefore / roundStartCash - 1) * 10000) / 100
+          : 0,
+      pickCount: soldRecords.length + trailedRecords.length,
+      soldCount: soldRecords.length,
+      trailPendingCount,
+      trailExitCount: 0,
+      trailNote: trailPendingCount
+        ? `續抱中 ${trailPendingCount} 檔`
+        : '',
       holdingMode,
       plannedHoldDays: roundTradingDays,
       ...extra,
     })
+
+    // 結算當日不檢查續抱出場；從次一交易日起算
+    trailCursor = Math.max(trailCursor, settleIdx)
+    foreignTrailInflowThisRound = 0
 
     return netBefore
   }
@@ -1234,7 +1484,10 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     roundNo += 1
     const roundStartIdx = startIdx
     const roundStartDate = calendar[roundStartIdx]
+    // 開輪前先處理續抱出場；這些現金會進入本輪 startingCash（合理轉移）
+    advanceTrailsTo(roundStartIdx)
     const roundStartCash = cash
+    foreignTrailInflowThisRound = 0
 
     const idealSettleIdx = roundStartIdx + roundTradingDays
     let settleIdx = Math.min(idealSettleIdx, lastAllowedIdx)
@@ -1255,6 +1508,10 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
         endingCash: roundStartCash,
         returnPct: 0,
         pickCount: 0,
+        soldCount: 0,
+        trailPendingCount: 0,
+        trailExitCount: 0,
+        trailNote: '',
         holdingMode,
         plannedHoldDays: roundTradingDays,
         note: '無法建倉',
@@ -1268,6 +1525,7 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       const cullIdx = roundStartIdx + offset
       if (cullIdx > settleIdx) break
       if (cullIdx > lastAllowedIdx) break
+      advanceTrailsTo(cullIdx)
       const cullDate = calendar[cullIdx]
 
       if (positions.length <= 1 && cullSizeMode !== 'negativeReturn') {
@@ -1287,8 +1545,9 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
       }
     }
 
+    advanceTrailsTo(settleIdx)
     const settleDate = calendar[settleIdx]
-    settleAll(settleDate, roundStartCash, {
+    settleAll(settleDate, settleIdx, roundStartCash, {
       earlySettle:
         earlySettle &&
         (holdingMode === 'cycles' || cullSizeMode === 'negativeReturn'),
@@ -1304,13 +1563,29 @@ export function runMomentumRotationBacktest(stockData, calendar, rawParams = {})
     if (startIdx > lastAllowedIdx) break
   }
 
+  advanceTrailsTo(lastAllowedIdx, { forceAll: true })
+  if (trailPositions.length) {
+    // 保底：若仍有續抱（例如 trailCursor 已到末日但條件未觸發），末日強制出清
+    const date = calendar[lastAllowedIdx]
+    const soldRecords = trailPositions.map((pos) =>
+      sellTrailPosition(pos, date, '回測結束強制結束續抱')
+    )
+    trailPositions = []
+    if (soldRecords.length) {
+      recordEvent('trail_exit', date, {
+        sold: soldRecords,
+        remainingTrailCount: 0,
+      })
+    }
+  }
+
   const finalCash = positions.length
-    ? portfolioMarketValue(cash, positions, stockData, calendar[lastAllowedIdx])
+    ? portfolioMarketValue(cash, allHeldPositions(), stockData, calendar[lastAllowedIdx])
     : cash
 
   const maxDrawdown = calcMaxDrawdown(history, initialCapital)
   const tradeReturns = events
-    .filter((e) => e.type === 'settle' || e.type === 'cull')
+    .filter((e) => e.type === 'settle' || e.type === 'cull' || e.type === 'trail_exit')
     .flatMap((e) => (e.sold ?? []).map((s) => (s.returnPct ?? 0) / 100))
     .filter((r) => Number.isFinite(r))
 

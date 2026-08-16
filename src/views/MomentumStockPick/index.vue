@@ -13,7 +13,7 @@
         :closable="false"
         class="mb-12"
         title="策略規則"
-        description="每輪：可先篩產業 → 建倉可選「動能排名」或「隨機選股」→ 每 Y 交易日汰弱留強（仍依持股內動能）→ 持滿一輪後結算再重選。預設開盤價；可開「買高賣低」。僅 4 碼普通股，排除 ETF／DR。"
+        description="每輪：可先篩產業 → 建倉可選「動能排名」或「隨機選股」→ 每 Y 交易日汰弱留強（仍依持股內動能）→ 持滿一輪後結算再重選。可選「結算贏家續抱」吃長尾。預設開盤價；可開「買高賣低」。僅 4 碼普通股，排除 ETF／DR。"
       />
 
       <el-form label-width="130px">
@@ -234,6 +234,36 @@
             最倒楣成交：建倉／加碼用當日最高價，減碼／結算用當日最低價（預設仍為開盤價）
           </span>
         </el-form-item>
+        <el-form-item label="結算贏家續抱">
+          <el-switch
+            v-model="winnerTrailEnabled"
+            inline-prompt
+            active-text="開"
+            inactive-text="關"
+            :disabled="loading || running"
+          />
+          <span class="field-hint">
+            結算日若 D-1 仍為正報酬且收盤 ≥ SMA，該檔不賣；跌破均線次日開盤出，損益歸屬原輪
+          </span>
+        </el-form-item>
+        <el-form-item v-if="winnerTrailEnabled" label="續抱均線 XX">
+          <el-input-number
+            v-model="winnerTrailSmaPeriod"
+            :min="2"
+            :max="250"
+            :disabled="loading || running"
+          />
+          <span class="field-hint">交易日 SMA</span>
+        </el-form-item>
+        <el-form-item v-if="winnerTrailEnabled" label="續抱上限天數">
+          <el-input-number
+            v-model="winnerTrailMaxDays"
+            :min="0"
+            :max="1000"
+            :disabled="loading || running"
+          />
+          <span class="field-hint">0 = 不限制；否則達上限強制出場</span>
+        </el-form-item>
         <el-form-item label="輸出圖表">
           <el-switch v-model="outputChart" inline-prompt active-text="是" inactive-text="否" />
         </el-form-item>
@@ -335,9 +365,17 @@
           </template>
         </el-table-column>
         <el-table-column prop="pickCount" label="結算檔數" width="88" align="center" />
-        <el-table-column label="備註" min-width="140">
+        <el-table-column label="續抱" width="80" align="center">
           <template #default="{ row }">
-            <span v-if="row.note">{{ row.note }}</span>
+            <span v-if="row.trailPendingCount > 0">待 {{ row.trailPendingCount }}</span>
+            <span v-else-if="row.trailExitCount > 0">已 {{ row.trailExitCount }}</span>
+            <span v-else>—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="備註" min-width="160">
+          <template #default="{ row }">
+            <span v-if="row.trailNote">{{ row.trailNote }}</span>
+            <span v-else-if="row.note">{{ row.note }}</span>
             <span v-else-if="row.earlySettle">提前結算（僅剩 1 檔）</span>
             <span v-else>—</span>
           </template>
@@ -488,6 +526,32 @@
       </template>
 
       <template v-else-if="selectedEvent?.type === 'settle'">
+        <h4 v-if="(selectedEvent.trailed ?? []).length" class="detail-section-title">
+          續抱（{{ selectedEvent.trailed.length }} 檔）
+        </h4>
+        <el-table
+          v-if="(selectedEvent.trailed ?? []).length"
+          :data="selectedEvent.trailed"
+          stripe
+          size="small"
+          border
+          max-height="240"
+          class="mb-12"
+        >
+          <el-table-column label="商品" min-width="120">
+            <template #default="{ row }">{{ row.stockName }} {{ row.stockId }}</template>
+          </el-table-column>
+          <el-table-column label="成本" width="100" align="right">
+            <template #default="{ row }">{{ formatMoney(row.totalCostBasis) }}</template>
+          </el-table-column>
+          <el-table-column label="備註" min-width="180">
+            <template #default="{ row }">{{ row.note || '—' }}</template>
+          </el-table-column>
+        </el-table>
+
+        <h4 v-if="(selectedEvent.sold ?? []).length" class="detail-section-title">
+          結算賣出（{{ selectedEvent.sold.length }} 檔）
+        </h4>
         <el-table :data="selectedEvent.sold ?? []" stripe size="small" border max-height="520">
           <el-table-column label="商品" min-width="110" fixed>
             <template #default="{ row }">{{ row.stockName }} {{ row.stockId }}</template>
@@ -522,8 +586,41 @@
               <span :class="returnClass(row.returnPct)">{{ formatPct(row.returnPct) }}</span>
             </template>
           </el-table-column>
+          <el-table-column label="備註" min-width="120">
+            <template #default="{ row }">{{ row.note || '—' }}</template>
+          </el-table-column>
         </el-table>
-        <p v-if="selectedEvent.note" class="detail-note">{{ selectedEvent.note }}</p>
+      </template>
+
+      <template v-else-if="selectedEvent?.type === 'trail_exit'">
+        <el-table :data="selectedEvent.sold ?? []" stripe size="small" border max-height="520">
+          <el-table-column label="商品" min-width="110" fixed>
+            <template #default="{ row }">{{ row.stockName }} {{ row.stockId }}</template>
+          </el-table-column>
+          <el-table-column label="原輪" width="64" align="center">
+            <template #default="{ row }">{{ row.originRoundNo ?? '—' }}</template>
+          </el-table-column>
+          <el-table-column label="續抱起" width="100">
+            <template #default="{ row }">{{ formatDisplayDate(row.trailStartDate) }}</template>
+          </el-table-column>
+          <el-table-column label="買入日" width="88">
+            <template #default="{ row }">{{ formatDisplayDate(row.initialBuyDate) }}</template>
+          </el-table-column>
+          <el-table-column label="賣出日" width="88">
+            <template #default="{ row }">{{ formatDisplayDate(row.sellDate) }}</template>
+          </el-table-column>
+          <el-table-column label="賣出金額" width="100" align="right">
+            <template #default="{ row }">{{ formatMoney(row.sellAmount) }}</template>
+          </el-table-column>
+          <el-table-column label="報酬%" width="80" align="right">
+            <template #default="{ row }">
+              <span :class="returnClass(row.returnPct)">{{ formatPct(row.returnPct) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="備註" min-width="160">
+            <template #default="{ row }">{{ row.note || '—' }}</template>
+          </el-table-column>
+        </el-table>
       </template>
 
       <template v-else-if="selectedEvent?.type === 'buy_skip'">
@@ -581,6 +678,9 @@ const cullSellVolumeMode = ref(DEFAULT_MOMENTUM_PARAMS.cullSellVolumeMode)
 const cullAddonVolumeMode = ref(DEFAULT_MOMENTUM_PARAMS.cullAddonVolumeMode)
 const skipLimitUpBuy = ref(DEFAULT_MOMENTUM_PARAMS.skipLimitUpBuy)
 const buyHighSellLow = ref(DEFAULT_MOMENTUM_PARAMS.buyHighSellLow)
+const winnerTrailEnabled = ref(DEFAULT_MOMENTUM_PARAMS.winnerTrailEnabled)
+const winnerTrailSmaPeriod = ref(DEFAULT_MOMENTUM_PARAMS.winnerTrailSmaPeriod)
+const winnerTrailMaxDays = ref(DEFAULT_MOMENTUM_PARAMS.winnerTrailMaxDays)
 const outputChart = ref(true)
 
 const loading = ref(false)
@@ -678,6 +778,7 @@ const TYPE_LABELS = {
   round_buy: '建倉',
   cull: '汰弱',
   settle: '結算',
+  trail_exit: '續抱出場',
   buy_skip: '略過建倉',
 }
 
@@ -758,7 +859,16 @@ function formatEventDetail(ev) {
     return `${target}賣 ${ev.sellCount ?? 0} 檔${names ? `（${names}）` : ''}，加碼 ${addonN} 檔，存活 ${ev.survivorCount ?? 0} 檔${zeroTip}${emptyTip}`
   }
   if (ev.type === 'settle') {
-    return `全數賣出 ${(ev.sold ?? []).length} 檔，期末現金 ${formatMoney(ev.roundCash)}`
+    const soldN = (ev.sold ?? []).length
+    const trailN = ev.trailCount ?? (ev.trailed ?? []).length
+    if (trailN > 0) {
+      return `賣出 ${soldN} 檔、續抱 ${trailN} 檔，可用現金 ${formatMoney(ev.roundCash)}`
+    }
+    return `全數賣出 ${soldN} 檔，期末現金 ${formatMoney(ev.roundCash)}`
+  }
+  if (ev.type === 'trail_exit') {
+    const names = (ev.sold ?? []).map((s) => s.stockId).join('、')
+    return `續抱出場 ${(ev.sold ?? []).length} 檔${names ? `（${names}）` : ''}，剩餘續抱 ${ev.remainingTrailCount ?? 0}`
   }
   if (ev.type === 'buy_skip') {
     return ev.reason ?? '無符合條件標的'
@@ -849,7 +959,9 @@ async function runBacktest() {
 
   try {
     const lookback = rebalanceInterval.value
-    const padCalendarDays = Math.ceil(lookback * 1.6) + holdingSpanDays.value
+    const smaPad = winnerTrailEnabled.value ? winnerTrailSmaPeriod.value : 0
+    const padCalendarDays =
+      Math.ceil(Math.max(lookback, smaPad) * 1.6) + holdingSpanDays.value
     const calendarStart = shiftDateString(startDate.value, -padCalendarDays)
 
     progressPhase.value = '載入交易日曆'
@@ -990,6 +1102,9 @@ async function runBacktest() {
       cullAddonVolumeMode: cullAddonVolumeMode.value,
       skipLimitUpBuy: skipLimitUpBuy.value,
       buyHighSellLow: buyHighSellLow.value,
+      winnerTrailEnabled: winnerTrailEnabled.value,
+      winnerTrailSmaPeriod: winnerTrailSmaPeriod.value,
+      winnerTrailMaxDays: winnerTrailMaxDays.value,
     })
 
     result.value = backtest
