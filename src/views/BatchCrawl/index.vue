@@ -10,7 +10,7 @@
         :closable="false"
         class="format-alert"
         title="台股總覽 CSV"
-        description="請上傳含「產業別、股票代碼、股票名稱、市場別」的上市櫃清單。系統僅保留 4 碼股票代號（略過 ETF、債券、權證等），爬取時一併寫入產業別、名稱、市場別。"
+        description="請上傳含「產業別、股票代碼、股票名稱、市場別」的上市櫃清單。系統僅保留 4 碼股票代號（略過 ETF、債券、權證等），爬取時一併寫入產業別、名稱、市場別。已有資料時：若最新交易日 ≥ 結束日則略過，否則只補缺口尾端。"
       />
       <el-form label-width="100px">
         <el-form-item label="CSV 上傳">
@@ -389,7 +389,14 @@ const startCrawl = async () => {
           progress.skipped += 1
         } else {
           row.status = 'success'
-          row.message = `寫入 ${res.data?.upserted ?? 0} 筆`
+          const upserted = res.data?.upserted ?? 0
+          if (res.data?.mode === 'tail' && res.data?.fetch_start) {
+            row.message =
+              res.data.reason ||
+              `續爬 ${res.data.fetch_start}～${res.data.fetch_end}，寫入 ${upserted} 筆`
+          } else {
+            row.message = `寫入 ${upserted} 筆`
+          }
           progress.success += 1
         }
       } catch (err) {
