@@ -50,7 +50,9 @@
             </el-space>
             <template #footer>
               <el-space direction="vertical" alignment="flex-start">
-                <el-text v-for="item in smaAnnualReturnLog" :key="item.year">{{ item.year }} : {{ item.return }}％</el-text>
+                <el-text v-for="item in smaAnnualReturnLog" :key="item.year">
+                  {{ item.year }} : {{ item.return }}％　回撤 {{ item.maxDrawdown }}％
+                </el-text>
               </el-space>
             </template>
           </el-card>
@@ -72,7 +74,9 @@
             </el-space>
             <template #footer>
               <el-space direction="vertical" alignment="flex-start">
-                <el-text v-for="item in smaQQQAnnualReturnLog" :key="item.year">{{ item.year }} : {{ item.return }}％</el-text>
+                <el-text v-for="item in smaQQQAnnualReturnLog" :key="item.year">
+                  {{ item.year }} : {{ item.return }}％　回撤 {{ item.maxDrawdown }}％
+                </el-text>
               </el-space>
             </template>
           </el-card>
@@ -93,7 +97,9 @@
             </el-space>
             <template #footer>
               <el-space direction="vertical" alignment="flex-start">
-                <el-text v-for="item in bhAnnualReturnLog" :key="item.year">{{ item.year }} : {{ item.return }}％</el-text>
+                <el-text v-for="item in bhAnnualReturnLog" :key="item.year">
+                  {{ item.year }} : {{ item.return }}％　回撤 {{ item.maxDrawdown }}％
+                </el-text>
               </el-space>
             </template>
           </el-card>
@@ -116,7 +122,9 @@
             </el-space>
             <template #footer>
               <el-space direction="vertical" alignment="flex-start">
-                <el-text v-for="item in dcaAnnualReturnLog" :key="item.year">{{ item.year }} : {{ item.return }}％</el-text>
+                <el-text v-for="item in dcaAnnualReturnLog" :key="item.year">
+                  {{ item.year }} : {{ item.return }}％　回撤 {{ item.maxDrawdown }}％
+                </el-text>
               </el-space>
             </template>
           </el-card>
@@ -293,37 +301,9 @@ const runTest = (
     const dailyVol = Math.sqrt(variance);
     const annualVol = dailyVol * Math.sqrt(252);
 
-    // 計算每一年的年化報酬率%數，格式為{ year: 2020, return: 10 }
+    // 計算每一年的報酬率與年內最大回撤，格式為 { year, return, maxDrawdown }
     function calcAnnualReturns(equityCurve) {
-      // equityCurve: [{date, equity}...]
-      const byYear = {};
-
-      for (const pt of equityCurve) {
-        const d = pt.date instanceof Date ? pt.date : new Date(pt.date);
-        const year = d.getFullYear();
-        if (!byYear[year]) {
-          byYear[year] = { startEquity: pt.equity, endEquity: pt.equity, first: d, last: d };
-        }
-        if (d < byYear[year].first) {
-          byYear[year].first = d;
-          byYear[year].startEquity = pt.equity;
-        }
-        if (d > byYear[year].last) {
-          byYear[year].last = d;
-          byYear[year].endEquity = pt.equity;
-        }
-      }
-
-      // 年化計算（按該年份的實際天數做）也可以只算單年單純報酬率
-      const annualReturns = [];
-      for (const yearStr of Object.keys(byYear).sort()) {
-        const year = Number(yearStr);
-        const y = byYear[year];
-        // 這裡假設每年完整，計算單純報酬率，不年化
-        const ret = y.endEquity / y.startEquity - 1;
-        annualReturns.push({ year, return: +(ret * 100).toFixed(2) });
-      }
-      return annualReturns;
+      return calcAnnualReturnsFromCurve(equityCurve);
     }
 
 
@@ -960,14 +940,24 @@ const runTest = (
     };
   }
 
+  /**
+   * 各年報酬 + 年內最大回撤（該年權益最高點到之後最低點，%）
+   */
   function calcAnnualReturnsFromCurve(equityCurve) {
     const byYear = {};
     for (const pt of equityCurve) {
       const d = pt.date instanceof Date ? pt.date : new Date(pt.date);
       const year = d.getFullYear();
       if (!byYear[year]) {
-        byYear[year] = { startEquity: pt.equity, endEquity: pt.equity, first: d, last: d };
+        byYear[year] = {
+          startEquity: pt.equity,
+          endEquity: pt.equity,
+          first: d,
+          last: d,
+          points: [],
+        };
       }
+      byYear[year].points.push({ date: d, equity: pt.equity });
       if (d < byYear[year].first) {
         byYear[year].first = d;
         byYear[year].startEquity = pt.equity;
@@ -977,12 +967,30 @@ const runTest = (
         byYear[year].endEquity = pt.equity;
       }
     }
+
     const annualReturns = [];
     for (const yearStr of Object.keys(byYear).sort()) {
       const year = Number(yearStr);
       const y = byYear[year];
       const ret = y.endEquity / y.startEquity - 1;
-      annualReturns.push({ year, return: +(ret * 100).toFixed(2) });
+
+      // 該年：依時間走，從年內高點算到之後低點的最大回撤
+      const points = [...y.points].sort((a, b) => a.date - b.date);
+      let peak = points[0]?.equity ?? 0;
+      let maxDd = 0;
+      for (const p of points) {
+        if (p.equity > peak) peak = p.equity;
+        if (peak > 0) {
+          const dd = p.equity / peak - 1;
+          if (dd < maxDd) maxDd = dd;
+        }
+      }
+
+      annualReturns.push({
+        year,
+        return: +(ret * 100).toFixed(2),
+        maxDrawdown: +(maxDd * 100).toFixed(2),
+      });
     }
     return annualReturns;
   }
