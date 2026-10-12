@@ -47,6 +47,7 @@ const routeItems = computed(() => {
     optimizedIndex: 'XQ 分析器 重製版',
     sma20PyramidBacktest: 'SMA20 延伸加碼回測',
     '2xETFvsSMA200': '2倍ETF vs SMA200',
+    marketRegimeBacktest: '0050 市場三態回測',
     strategyCompare: '策略選股比較',
     holdingsRecord: '持股紀錄',
     momentumStockPick: '動能選股',

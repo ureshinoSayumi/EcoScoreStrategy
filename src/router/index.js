@@ -55,6 +55,13 @@ const router = createRouter({
       name: '2xETFvsSMA200',
       component: () => import('@/views/2xETFvsSMA200/index.vue'),
     },
+    // 0050 市場三態（上漲／盤整／下跌）回測
+    {
+      path: '/marketRegimeBacktest',
+      name: 'marketRegimeBacktest',
+      component: () => import('@/views/MarketRegimeBacktest/index.vue'),
+    },
+
     // 策略選股比較
     {
       path: '/strategyCompare',
