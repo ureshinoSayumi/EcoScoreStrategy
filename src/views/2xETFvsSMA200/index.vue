@@ -3,7 +3,12 @@
     <el-main>
       <el-row :gutter="20">
         <el-col>
-          <input type="file" accept=".csv" multiple @change="inputFile" />
+          <el-form-item label="基準訊號 CSV（如 QQQ）">
+            <input type="file" accept=".csv" @change="inputSignalFile" />
+          </el-form-item>
+          <el-form-item label="2x ETF CSV（回測標的）">
+            <input type="file" accept=".csv" @change="inputLeverageFile" />
+          </el-form-item>
           <el-button type="primary" @click="monteCarloSimulation">蒙地卡羅模擬</el-button>
           <el-form-item label="SMA">
             <el-input-number v-model="SMA" :min="0" size="small" />
@@ -175,15 +180,15 @@
 <script lang="ts" setup>
 import { parseCSV } from '@/utils/csvReader';
 import * as echarts from 'echarts';
-import { onMounted, ref } from 'vue';
+import { ref } from 'vue';
 
 const SMA = ref(200)
 const myChartDom = ref()
 const myChartDom2 = ref()
 const myChartDom3 = ref()
 const tableData = ref([]) // 交易資料
-const fileNames = ref([]) // 檔案名稱
-const qqqData = ref([]) // QQQ 資料
+const fileNames = ref([]) // [基準訊號, 2x ETF]
+const qqqData = ref([]) // 基準訊號（如 QQQ）資料
 
 const enterSensitive = ref(1) // 連續站上日
 const exitSensitive = ref(1) // 連續跌破日
@@ -1040,28 +1045,36 @@ const runTest = (
 }
 
 
-const inputFile = async (event) => {
+/** 第一個：基準訊號 CSV（原 qqq.csv） */
+const inputSignalFile = async (event) => {
   const file = event.target.files?.[0];
-  if (!file) {
-    return
-  }
+  if (!file) return;
+
   const data = await parseCSV(file);
-  console.log('CSV資料:', data);
-  // 分析
+  qqqData.value = data;
+  fileNames.value = [file.name, fileNames.value[1]].filter(Boolean);
+  console.log('基準訊號 CSV:', file.name, data.length);
+};
+
+/** 第二個：2x ETF CSV，上傳完就開跑 */
+const inputLeverageFile = async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+
+  if (!qqqData.value?.length) {
+    alert('請先上傳基準訊號 CSV（如 QQQ）');
+    event.target.value = '';
+    return;
+  }
+
+  const data = await parseCSV(file);
+  fileNames.value = [fileNames.value[0], file.name].filter(Boolean);
+  console.log('2x ETF CSV:', file.name, data);
+
   analyzeSMA200OpenClose(data);
-
-  // data: 原始資料
-  // 1000000: 初始資金
-  // SMA.value: SMA窗口
-  // enterSensitive.value: 連續站上日
-  // exitSensitive.value: 連續跌破日
-  // buyBand.value: 站上SMA200% band
-  // sellBand.value: 跌破SMA200% band
-  // fee.value: 手續費
   backtestSMA200(data);
-  buildChart3(data, SMA.value)
-
-}
+  buildChart3(data, SMA.value);
+};
 
 const backtestSMA200 = (data) => {
   const result = runTest(
@@ -1620,11 +1633,6 @@ const monteCarloSimulation = () => {
 }
 
 
-onMounted(async () => {
-  const res = await fetch('/qqq.csv')
-  const csvText = await res.text()
-  qqqData.value = await parseCSV(csvText)
-})
 </script>
 <style scoped>
 :deep(.el-table .warning-row) {
